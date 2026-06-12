@@ -1,0 +1,17 @@
+# Cargo workspace root.
+# The only Rust crate this milestone is the desktop security core (`src-tauri`);
+# additional crates would be added as members here.
+[workspace]
+resolver = "2"
+members = ["apps/desktop/src-tauri"]
+
+# Shared lint policy for every workspace crate (PROJECT.md §4.1).
+# `cargo clippy -- -D warnings` in CI promotes all of these to hard errors.
+[workspace.lints.rust]
+unsafe_code = "deny"          # No `unsafe` without a SAFETY comment + ADR (none yet).
+
+[workspace.lints.clippy]
+# PROJECT.md §4.1 — no unwrap()/expect()/panic!() in non-test code.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

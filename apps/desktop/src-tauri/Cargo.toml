@@ -1,0 +1,64 @@
+[package]
+name = "cerberus-desktop"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Cerberus desktop security core (Rust). Crypto, vault, and the Tauri command boundary live here."
+
+[lib]
+name = "cerberus_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cerberus-desktop"
+path = "src/main.rs"
+# The binary IS the Tauri app, so it only builds with the `desktop` feature.
+# Without it, `cargo build`/`cargo test` compile and test the pure crypto/vault
+# core only (no Tauri, no frontend dist) — keeping CI hermetic (ADR-0003 lineage).
+required-features = ["desktop"]
+
+# Inherit the workspace-wide lint policy (PROJECT.md §4.1).
+[lints]
+workspace = true
+
+[features]
+default = []
+# Pulls in the Tauri runtime + build script and enables the `commands` FFI module.
+desktop = ["dep:tauri", "dep:tauri-build"]
+
+[dependencies]
+# One error enum via thiserror (PROJECT.md §4.1).
+thiserror = "2"
+
+# --- Cryptography (ADR-0001). Vetted RustCrypto crates only; no hand-rolled primitives. ---
+# Argon2id KDF: master password -> master key.
+argon2 = "0.5"
+# HKDF-SHA-256: key separation (auth key / encryption key) from the master key.
+hkdf = "0.12"
+sha2 = "0.10"
+# AEAD: XChaCha20-Poly1305 (large random nonce). No unauthenticated modes.
+chacha20poly1305 = "0.10"
+# Secret hygiene: zeroize-on-drop typed secrets and constant-time comparison.
+zeroize = { version = "1.7", features = ["derive"] }
+subtle = "2.5"
+# OS CSPRNG for fresh nonces and the random vault key (Result-returning, no panic).
+getrandom = "0.2"
+
+# --- Local persistence (ADR-0005 wire format). No crypto logic here. ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+
+# --- Tauri runtime (optional; only with the `desktop` feature). ---
+tauri = { version = "2", optional = true }
+
+[build-dependencies]
+# Only compiled/run with the `desktop` feature (gated in build.rs).
+tauri-build = { version = "2", optional = true }
+
+[dev-dependencies]
+# Hex decoding for published known-answer test vectors.
+hex = "0.4"
+# Temp dirs for persistence round-trip tests.
+tempfile = "3"

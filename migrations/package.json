@@ -1,0 +1,17 @@
+{
+  "name": "@cerberus/migrations",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ordered, forward-only SQL migrations and the runner that applies them (PROJECT.md §5).",
+  "scripts": {
+    "migrate": "tsx migrate.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10"
+  }
+}

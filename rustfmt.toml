@@ -1,0 +1,2 @@
+# rustfmt configuration (PROJECT.md §4.1). Defaults + pinned edition.
+edition = "2021"

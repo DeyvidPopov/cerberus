@@ -1,0 +1,15 @@
+{
+  "name": "@cerberus/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Documented crypto constants and wire formats (PROJECT.md §2). Constants only — no crypto logic.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
