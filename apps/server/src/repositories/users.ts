@@ -84,6 +84,17 @@ export function createUsersRepository(db: Db) {
       return row ? toRecord(row) : null;
     },
 
+    async findById(userId: string): Promise<UserRecord | null> {
+      const result = await db.query<UserRow>(
+        `SELECT id, username, auth_key_hash, kdf_version, kdf_salt, kdf_params
+         FROM users
+         WHERE id = $1`,
+        [userId],
+      );
+      const row = result.rows[0];
+      return row ? toRecord(row) : null;
+    },
+
     async existsByUsername(username: string): Promise<boolean> {
       const result = await db.query<{ exists: boolean }>(
         `SELECT EXISTS (SELECT 1 FROM users WHERE username = $1) AS exists`,

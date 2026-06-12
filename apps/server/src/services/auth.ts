@@ -1,9 +1,12 @@
-// Auth service — the zero-knowledge identity logic (PROJECT.md §1, §4.3; ADR-0001,
-// ADR-0007). The server NEVER receives or stores the master password or any
-// derived encryption key; it stores only an Argon2id hash of the auth key, the
-// public KDF params, and the opaque wrapped vault key.
+// Auth service — zero-knowledge identity + ADAPTIVE enforcement (PROJECT.md §1,
+// §4.3; ADR-0001, ADR-0007, ADR-0010..0012). The server NEVER receives the master
+// password or any derived encryption key. M9: login is the ENFORCEMENT point — it
+// verifies the auth key, evaluates the behavioral + contextual signals, combines
+// them into a band, and grants / steps up / denies. A high absolute per-IP
+// failed-login backstop replaces the M4 per-account lockout (no targeted DoS).
 import { ARGON2ID_PARAMS, KDF_VERSION } from '@cerberus/protocol';
 import type {
+  EnrollmentSampleRequest,
   KdfParams,
   LoginRequest,
   PreloginResponse,
@@ -12,10 +15,14 @@ import type {
 import type { Pool } from 'pg';
 
 import type { ServerConfig } from '../config';
+import { createBehavioralBaselinesRepository } from '../repositories/behavioral-baselines';
 import { createDevicesRepository } from '../repositories/devices';
 import { createLoginFailuresRepository } from '../repositories/login-failures';
 import { withTransaction } from '../repositories/pool';
+import { createRiskEventsRepository } from '../repositories/risk-events';
 import { createSessionsRepository } from '../repositories/sessions';
+import { createStepUpChallengesRepository } from '../repositories/step-up-challenges';
+import { createTotpSecretsRepository } from '../repositories/totp-secrets';
 import { createUsersRepository } from '../repositories/users';
 import { createVaultKeysRepository } from '../repositories/vault-keys';
 import {
@@ -26,10 +33,13 @@ import {
   verifyAgainstDummy,
   verifyAuthKey,
 } from './auth-crypto';
+import type { EnrollmentService } from './enrollment';
 import { truncateIp } from './geoip';
-import type { AccountLockout } from './rate-limiter';
+import type { BehavioralInput, RiskDecisionService } from './risk-decision';
+import type { ScoringService } from './scoring';
+import type { TotpService } from './totp-service';
 
-/** Per-request login context (client IP for failure-velocity history). */
+/** Per-request login context (client IP for the backstop + failure history). */
 export interface LoginContext {
   ip: string | null;
 }
@@ -37,21 +47,28 @@ export interface LoginContext {
 export interface AuthServiceDeps {
   pool: Pool;
   config: ServerConfig;
-  lockout: AccountLockout;
+  riskDecision: RiskDecisionService;
+  scoring: ScoringService;
+  enrollment: EnrollmentService;
+  totp: TotpService;
 }
 
 export type RegisterResult = { ok: true; userId: string } | { ok: false; reason: 'username_taken' };
 
+interface GrantedSession {
+  sessionToken: string;
+  expiresAt: string;
+  wrappedVaultKey: string;
+  wrappedVaultKeyNonce: string;
+  deviceIsNew: boolean;
+}
+
 export type LoginResult =
-  | {
-      ok: true;
-      sessionToken: string;
-      expiresAt: string;
-      wrappedVaultKey: string;
-      wrappedVaultKeyNonce: string;
-      deviceIsNew: boolean;
-    }
-  | { ok: false };
+  | ({ kind: 'granted' } & GrantedSession)
+  | { kind: 'step_up'; challengeToken: string; expiresAt: string }
+  | { kind: 'denied' }
+  | { kind: 'invalid_credentials' }
+  | { kind: 'rate_limited'; retryAfterMs: number };
 
 function isUniqueViolation(error: unknown): boolean {
   return (
@@ -69,13 +86,74 @@ const DUMMY_KDF_PARAMS: KdfParams = {
 };
 
 export function createAuthService(deps: AuthServiceDeps) {
-  const { pool, config, lockout } = deps;
+  const { pool, config, riskDecision, scoring, enrollment, totp } = deps;
+  const backstop = config.policy.backstop;
+
+  function windowStart(now: number): Date {
+    return new Date(now - backstop.windowMinutes * 60_000);
+  }
+
+  /** Determine the behavioral sub-score; buffer the sample if the user is still enrolling. */
+  async function behavioralFor(
+    userId: string,
+    sample: EnrollmentSampleRequest | null,
+  ): Promise<BehavioralInput> {
+    const active = await createBehavioralBaselinesRepository(pool).findActiveByUser(userId);
+    if (active) {
+      if (sample === null) {
+        // Active baseline but no telemetry: FAIL CLOSED (suppression is not a bypass).
+        return { score: 1, confidence: 'missing', reason: { status: 'missing_sample' } };
+      }
+      const result = await scoring.scoreActive(userId, sample);
+      if (result.outcome === 'scored') {
+        return {
+          score: result.behavioralScore ?? 0,
+          confidence: 'normal',
+          reason: (result.keystroke.reason ?? {}) as Record<string, unknown>,
+        };
+      }
+      // not_scored (dimension/schema mismatch) — fail closed.
+      return { score: 1, confidence: 'missing', reason: (result.keystroke.reason ?? {}) as Record<string, unknown> };
+    }
+    // Enrolling: buffer the sample toward a baseline (best-effort); behavioral is cold-start neutral.
+    if (sample !== null) {
+      await enrollment.submitSample(userId, sample);
+    }
+    return { score: 0, confidence: 'low', reason: { status: 'enrolling' } };
+  }
+
+  async function issueSession(
+    userId: string,
+    deviceId: string | null,
+    isNewDevice: boolean,
+  ): Promise<({ kind: 'granted' } & GrantedSession)> {
+    const vaultKey = await createVaultKeysRepository(pool).findByUserId(userId);
+    if (!vaultKey) {
+      throw new Error('vault key missing for user');
+    }
+    const sessionToken = generateSessionToken();
+    const expiresAt = new Date(Date.now() + config.sessionTtlMs);
+    await createSessionsRepository(pool).create({
+      userId,
+      deviceId,
+      tokenHash: hashSessionToken(sessionToken),
+      expiresAt,
+      isNewDevice,
+    });
+    return {
+      kind: 'granted',
+      sessionToken,
+      expiresAt: expiresAt.toISOString(),
+      wrappedVaultKey: vaultKey.wrappedVaultKey.toString('base64'),
+      wrappedVaultKeyNonce: vaultKey.nonce.toString('base64'),
+      deviceIsNew: isNewDevice,
+    };
+  }
 
   return {
     /** Register a new account. Returns the new user id, or `username_taken`. */
     async register(input: RegisterRequest): Promise<RegisterResult> {
       const authKeyHash = await hashAuthKey(input.authKey);
-
       try {
         const userId = await withTransaction(pool, async (tx) => {
           const created = await createUsersRepository(tx).create({
@@ -101,19 +179,11 @@ export function createAuthService(deps: AuthServiceDeps) {
       }
     },
 
-    /**
-     * Return the KDF params the client needs to derive its auth key. For an
-     * unknown username, return deterministic dummy params (ADR-0007) so present
-     * and absent accounts are indistinguishable.
-     */
+    /** KDF params for deriving the auth key; deterministic dummy for unknown users (ADR-0007). */
     async prelogin(username: string): Promise<PreloginResponse> {
       const user = await createUsersRepository(pool).findByUsername(username);
       if (user) {
-        return {
-          kdfVersion: user.kdfVersion,
-          kdfSalt: user.kdfSalt.toString('base64'),
-          kdfParams: user.kdfParams,
-        };
+        return { kdfVersion: user.kdfVersion, kdfSalt: user.kdfSalt.toString('base64'), kdfParams: user.kdfParams };
       }
       return {
         kdfVersion: KDF_VERSION,
@@ -123,68 +193,117 @@ export function createAuthService(deps: AuthServiceDeps) {
     },
 
     /**
-     * Verify the auth key and, on success, enroll the device and issue a session.
-     * The unknown-user and wrong-password paths perform the same Argon2id verify
-     * work (no early return) so they are timing-indistinguishable.
+     * Verify the auth key and, on success, run the adaptive policy and enforce:
+     * grant a session, require step-up (TOTP), or deny. A high absolute per-IP
+     * failed-login backstop runs first (replaces the M4 per-account lockout).
      */
     async login(input: LoginRequest, context: LoginContext): Promise<LoginResult> {
-      const user = await createUsersRepository(pool).findByUsername(input.username);
+      const now = Date.now();
+      const ipTruncated = context.ip === null ? null : truncateIp(context.ip);
+      const failures = createLoginFailuresRepository(pool);
 
+      // Absolute per-IP backstop (hard) — only trips on extreme abuse from a source.
+      if (ipTruncated !== null) {
+        const ipFailures = await failures.countRecentByIp(ipTruncated, windowStart(now));
+        if (ipFailures >= backstop.ipHardCap) {
+          return { kind: 'rate_limited', retryAfterMs: backstop.windowMinutes * 60_000 };
+        }
+      }
+
+      const user = await createUsersRepository(pool).findByUsername(input.username);
       let valid: boolean;
       if (user) {
         valid = await verifyAuthKey(user.authKeyHash, input.authKey);
       } else {
-        // Equalize timing against the known-user path; result is always invalid.
-        await verifyAgainstDummy(input.authKey);
+        await verifyAgainstDummy(input.authKey); // equalize timing
         valid = false;
       }
-
       if (!user || !valid) {
-        lockout.recordFailure(`acct:${input.username}`, Date.now());
-        // Record the failure for the failure-velocity signal (ADR-0011). Only a
-        // truncated IP + optional user_id — never the attempted password.
-        await createLoginFailuresRepository(pool).record({
-          userId: user?.id ?? null,
-          ipTruncated: context.ip === null ? null : truncateIp(context.ip),
-        });
-        return { ok: false };
+        await failures.record({ userId: user?.id ?? null, ipTruncated });
+        return { kind: 'invalid_credentials' };
       }
 
-      lockout.reset(`acct:${input.username}`);
+      // Password verified: enroll the device, evaluate signals, decide, enforce.
+      const device = await createDevicesRepository(pool).enroll(user.id, input.deviceFingerprintHash);
+      const behavioral = await behavioralFor(user.id, input.keystrokeSample ?? null);
+      const accountFailures = await failures.countRecentByUser(user.id, windowStart(now));
+      const hasConfirmedTotp = await createTotpSecretsRepository(pool).hasConfirmed(user.id);
 
-      const vaultKey = await createVaultKeysRepository(pool).findByUserId(user.id);
-      if (!vaultKey) {
-        // A registered user always has a wrapped vault key; treat its absence as
-        // a server-side inconsistency rather than leaking detail.
-        throw new Error('vault key missing for user');
-      }
-
-      const sessionToken = generateSessionToken();
-      const expiresAt = new Date(Date.now() + config.sessionTtlMs);
-
-      const deviceIsNew = await withTransaction(pool, async (tx) => {
-        const device = await createDevicesRepository(tx).enroll(
-          user.id,
-          input.deviceFingerprintHash,
-        );
-        await createSessionsRepository(tx).create({
-          userId: user.id,
-          deviceId: device.id,
-          tokenHash: hashSessionToken(sessionToken),
-          expiresAt,
-          isNewDevice: device.isNew,
-        });
-        return device.isNew;
+      const decision = await riskDecision.decide({
+        userId: user.id,
+        deviceId: device.id,
+        isNewDevice: device.isNew,
+        now: new Date(now),
+        ip: context.ip,
+        behavioral,
+        hasConfirmedTotp,
+        accountFailures,
       });
 
-      return {
-        ok: true,
-        sessionToken,
-        expiresAt: expiresAt.toISOString(),
-        wrappedVaultKey: vaultKey.wrappedVaultKey.toString('base64'),
-        wrappedVaultKeyNonce: vaultKey.nonce.toString('base64'),
-        deviceIsNew,
-      };
+      await createRiskEventsRepository(pool).insert({
+        userId: user.id,
+        deviceId: device.id,
+        signals: decision.signals,
+        behavioralScore: decision.behavioralScore,
+        contextScore: decision.contextScore,
+        compositeScore: decision.compositeScore,
+        policyBand: decision.band,
+        actionTaken: decision.action,
+        geoCountry: decision.geoCountry,
+        geoRegion: decision.geoRegion,
+        ipTruncated: decision.ipTruncated,
+        outcome: decision.action,
+      });
+
+      if (decision.action === 'denied') {
+        return { kind: 'denied' };
+      }
+      if (decision.action === 'step_up_required') {
+        const challengeToken = generateSessionToken();
+        const expiresAt = new Date(now + config.policy.totp.challengeTtlMs);
+        await createStepUpChallengesRepository(pool).create({
+          userId: user.id,
+          tokenHash: hashSessionToken(challengeToken),
+          deviceId: device.id,
+          isNewDevice: device.isNew,
+          method: 'totp',
+          expiresAt,
+        });
+        return { kind: 'step_up', challengeToken, expiresAt: expiresAt.toISOString() };
+      }
+      // 'granted' or 'step_up_bootstrap_grant' (newcomer without a usable second factor).
+      return issueSession(user.id, device.id, device.isNew);
+    },
+
+    /**
+     * Complete a step-up: verify the TOTP code against the pending challenge and
+     * issue the session. A wrong code is recorded (feeds failure-velocity) but does
+     * not consume the challenge, so a typo is retryable within the (rate-limited) TTL.
+     */
+    async verifyStepUp(
+      input: { challengeToken: string; code: string },
+      context: LoginContext,
+    ): Promise<LoginResult> {
+      const challenge = await createStepUpChallengesRepository(pool).findPendingByTokenHash(
+        hashSessionToken(input.challengeToken),
+      );
+      if (!challenge) {
+        return { kind: 'invalid_credentials' };
+      }
+      const result = await totp.verify(challenge.userId, input.code, Date.now());
+      if (!result.ok) {
+        await createLoginFailuresRepository(pool).record({
+          userId: challenge.userId,
+          ipTruncated: context.ip === null ? null : truncateIp(context.ip),
+        });
+        return { kind: 'invalid_credentials' };
+      }
+      // Atomically consume the challenge BEFORE issuing a session — if a concurrent
+      // verify already consumed it, do not mint a second session (single-use).
+      if (!(await createStepUpChallengesRepository(pool).consume(challenge.id, 'passed'))) {
+        return { kind: 'invalid_credentials' };
+      }
+      return issueSession(challenge.userId, challenge.deviceId, challenge.isNewDevice);
     },
   };
 }

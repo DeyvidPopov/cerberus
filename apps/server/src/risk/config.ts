@@ -142,6 +142,88 @@ export interface ContextualConfig {
   readonly failureVelocity: FailureVelocityConfig;
 }
 
+// ---------------------------------------------------------------------------
+// Adaptive policy (M9 / ADR-0012): the weighted-linear combiner weights, the
+// band thresholds, and the brute-force backstop caps. Named config (§4.4) — every
+// weight/threshold is here, tunable for the M11 FAR/FRR sweep, never a literal.
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-signal weights for the weighted-linear composite. NOT normalized to sum 1:
+ * composite = clamp01(Σ weight_i · subscore_i), so a single strong signal
+ * (impossible travel, a new device, high failure velocity) reaches step_up on its
+ * own and stacked strong signals reach deny. The behavioral weight reflects that
+ * keystroke dynamics is a moderately strong discriminator (M7 EER ≈ 13%).
+ */
+export interface CombinerWeights {
+  readonly behavioral: number;
+  readonly newDevice: number;
+  readonly geovelocity: number;
+  readonly timeOfDay: number;
+  readonly failureVelocity: number;
+}
+
+export const DEFAULT_COMBINER_WEIGHTS: CombinerWeights = {
+  behavioral: 0.5,
+  newDevice: 0.35,
+  geovelocity: 0.5,
+  timeOfDay: 0.2,
+  failureVelocity: 0.35,
+};
+
+/**
+ * Band thresholds on the composite score: composite ≥ deny → deny;
+ * ≥ stepUp → step_up; else grant. Starting points (ADR-0012): stepUp where a
+ * single moderate signal warrants verifying it is really the user; deny where
+ * stacked strong signals indicate an attack. Informed by the M7 behavioral
+ * operating point; tuned in M11.
+ */
+export interface BandThresholds {
+  readonly stepUp: number;
+  readonly deny: number;
+}
+
+export const DEFAULT_BAND_THRESHOLDS: BandThresholds = {
+  stepUp: 0.3,
+  deny: 0.7,
+};
+
+/**
+ * Brute-force backstop (replaces the M4 per-account lockout, ADR-0011 → ADR-0012):
+ * HIGH absolute failed-login caps that trip only on extreme abuse. The per-IP cap
+ * HARD-blocks an abusive source; the per-account cap forces step_up (escapable
+ * with TOTP) rather than a hard lock, so a single username cannot be cheaply
+ * locked out (the M4 targeted-DoS is gone). Window shared with failure-velocity.
+ */
+export interface BackstopConfig {
+  readonly windowMinutes: number;
+  readonly ipHardCap: number;
+  readonly accountStepUpCap: number;
+}
+
+export const DEFAULT_BACKSTOP_CONFIG: BackstopConfig = {
+  windowMinutes: 15,
+  ipHardCap: 50,
+  accountStepUpCap: 20,
+};
+
+/** TOTP step-up parameters (RFC 6238). */
+export interface TotpConfig {
+  readonly digits: number;
+  readonly periodSeconds: number;
+  /** Accepted time-step skew on each side (±skewSteps windows). */
+  readonly skewSteps: number;
+  /** How long a step-up challenge stays valid. */
+  readonly challengeTtlMs: number;
+}
+
+export const DEFAULT_TOTP_CONFIG: TotpConfig = {
+  digits: 6,
+  periodSeconds: 30,
+  skewSteps: 1,
+  challengeTtlMs: 5 * 60 * 1000,
+};
+
 export const DEFAULT_CONTEXTUAL_CONFIG: ContextualConfig = {
   newDevice: {
     knownTrustedScore: 0,

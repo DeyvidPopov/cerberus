@@ -8,6 +8,7 @@ vi.mock('./api', () => ({
   register: vi.fn(),
   prelogin: vi.fn(),
   login: vi.fn(),
+  verifyStepUp: vi.fn(),
 }));
 vi.mock('./device', () => ({
   deviceFingerprintHash: vi.fn(),
@@ -53,6 +54,7 @@ describe('loginAccount', () => {
     vi.mocked(deriveLoginAuthKey).mockResolvedValue('DERIVED-AUTHKEY');
     vi.mocked(deviceFingerprintHash).mockResolvedValue('FP-HASH');
     vi.mocked(login).mockResolvedValue({
+      status: 'granted',
       sessionToken: 'token',
       expiresAt: '2026-01-01T00:00:00.000Z',
       wrappedVaultKey: 'WRAPPED',
@@ -60,7 +62,7 @@ describe('loginAccount', () => {
       device: { isNew: true },
     });
 
-    const res = await loginAccount('alice', 'master-pw');
+    const res = await loginAccount('alice', 'master-pw', [10, 20, 30, 40]);
 
     expect(prelogin).toHaveBeenCalledWith({ username: 'alice' });
     expect(deriveLoginAuthKey).toHaveBeenCalledWith('master-pw', 'SALT', {
@@ -72,7 +74,33 @@ describe('loginAccount', () => {
       username: 'alice',
       authKey: 'DERIVED-AUTHKEY',
       deviceFingerprintHash: 'FP-HASH',
+      keystrokeSample: { featureSchemaVersion: 1, features: [10, 20, 30, 40] },
     });
-    expect(res.sessionToken).toBe('token');
+    expect(res.kind).toBe('granted');
+    if (res.kind === 'granted') {
+      expect(res.session.sessionToken).toBe('token');
+    }
+  });
+
+  it('surfaces a step-up challenge', async () => {
+    vi.mocked(prelogin).mockResolvedValue({
+      kdfVersion: 1,
+      kdfSalt: 'SALT',
+      kdfParams: { memoryKib: 1, iterations: 1, parallelism: 1 },
+    });
+    vi.mocked(deriveLoginAuthKey).mockResolvedValue('DERIVED-AUTHKEY');
+    vi.mocked(deviceFingerprintHash).mockResolvedValue('FP-HASH');
+    vi.mocked(login).mockResolvedValue({
+      status: 'step_up_required',
+      challengeToken: 'challenge-1',
+      expiresAt: '2026-01-01T00:00:00.000Z',
+      methods: ['totp'],
+    });
+
+    const res = await loginAccount('alice', 'master-pw', null);
+    expect(res.kind).toBe('step_up');
+    if (res.kind === 'step_up') {
+      expect(res.challengeToken).toBe('challenge-1');
+    }
   });
 });

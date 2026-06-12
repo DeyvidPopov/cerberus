@@ -219,45 +219,59 @@ describe('rate limiting and lockout (PROJECT.md §4.3)', () => {
     await send().expect(429);
   });
 
-  it('locks an account after repeated failed logins, independent of other accounts', async () => {
-    const locking = createApp(
-      pool,
-      testConfig({
-        rateLimit: {
-          ipWindowMs: 60_000,
-          ipMaxRequests: 1000,
-          accountMaxFailures: 3,
-          accountLockoutMs: 60_000,
-          vaultWindowMs: 60_000,
-          vaultMaxRequests: 1000,
-        },
-      }),
-    );
+  // M9 (ADR-0012) replaces the M4 per-account lockout: no targeted-DoS lock; an
+  // absolute per-IP backstop limits the attacker instead.
+  it('does NOT lock an account on failures (the M4 single-username DoS is gone)', async () => {
     const username = uniqueUsername();
     const { body, authKey } = makeRegistration(username);
-    await request(locking).post('/auth/register').send(body).expect(201);
+    await request(app).post('/auth/register').send(body).expect(201);
     const wrongKey = randomBytes(32).toString('base64');
     const fp = deviceFingerprintHash();
+    const attackerIp = '198.51.100.1'; // a /24 isolated from other tests
 
-    for (let i = 0; i < 3; i += 1) {
-      await request(locking)
+    // A targeted attack: several wrong guesses against the victim's account.
+    for (let i = 0; i < 6; i += 1) {
+      await request(app)
         .post('/auth/login')
+        .set('X-Forwarded-For', attackerIp)
         .send({ username, authKey: wrongKey, deviceFingerprintHash: fp })
         .expect(401);
     }
-    // Even the CORRECT auth key is now rejected: the account is locked.
-    await request(locking)
+    // The CORRECT password STILL authenticates (granted or step-up) — never locked
+    // out. The legitimate user logs in from their own clean IP.
+    const res = await request(app)
       .post('/auth/login')
-      .send({ username, authKey, deviceFingerprintHash: fp })
-      .expect(429);
+      .set('X-Forwarded-For', '203.0.113.50')
+      .send({ username, authKey, deviceFingerprintHash: fp });
+    expect(res.status).toBe(200);
+    expect(['granted', 'step_up_required']).toContain(res.body.status);
+  });
 
-    // A different account is unaffected.
-    const other = uniqueUsername();
-    const otherReg = makeRegistration(other);
-    await request(locking).post('/auth/register').send(otherReg.body).expect(201);
-    await request(locking)
+  it('trips the high absolute per-IP backstop only at the configured cap', async () => {
+    const base = testConfig();
+    const capped = createApp(
+      pool,
+      testConfig({ policy: { ...base.policy, backstop: { windowMinutes: 15, ipHardCap: 3, accountStepUpCap: 20 } } }),
+    );
+    const username = uniqueUsername();
+    const { body } = makeRegistration(username);
+    await request(capped).post('/auth/register').send(body).expect(201);
+    const wrongKey = randomBytes(32).toString('base64');
+    const fp = deviceFingerprintHash();
+    const ip = '192.0.2.50'; // isolated /24 (TEST-NET-1) for the backstop count
+
+    for (let i = 0; i < 3; i += 1) {
+      await request(capped)
+        .post('/auth/login')
+        .set('X-Forwarded-For', ip)
+        .send({ username, authKey: wrongKey, deviceFingerprintHash: fp })
+        .expect(401);
+    }
+    // The IP hit the absolute failed-login cap → further attempts are hard-blocked.
+    await request(capped)
       .post('/auth/login')
-      .send({ username: other, authKey: otherReg.authKey, deviceFingerprintHash: fp })
-      .expect(200);
+      .set('X-Forwarded-For', ip)
+      .send({ username, authKey: wrongKey, deviceFingerprintHash: fp })
+      .expect(429);
   });
 });

@@ -32,40 +32,9 @@ export class RateLimiter {
   }
 }
 
-interface FailureState {
-  failures: number;
-  lockedUntil: number;
-}
-
-/** Per-account lockout: after `maxFailures` consecutive failures, lock for `lockoutMs`. */
-export class AccountLockout {
-  private readonly state = new Map<string, FailureState>();
-
-  constructor(
-    private readonly maxFailures: number,
-    private readonly lockoutMs: number,
-  ) {}
-
-  isLocked(key: string, now: number): { locked: boolean; retryAfterMs: number } {
-    const entry = this.state.get(key);
-    if (entry && entry.lockedUntil > now) {
-      return { locked: true, retryAfterMs: entry.lockedUntil - now };
-    }
-    return { locked: false, retryAfterMs: 0 };
-  }
-
-  recordFailure(key: string, now: number): void {
-    const entry = this.state.get(key) ?? { failures: 0, lockedUntil: 0 };
-    entry.failures += 1;
-    if (entry.failures >= this.maxFailures) {
-      entry.lockedUntil = now + this.lockoutMs;
-      entry.failures = 0;
-    }
-    this.state.set(key, entry);
-  }
-
-  /** Clear failures for an account (call on a successful login). */
-  reset(key: string): void {
-    this.state.delete(key);
-  }
-}
+// NOTE (M9 / ADR-0012): the M4 per-account AccountLockout was REMOVED. A timed
+// per-account lock enabled a targeted availability DoS (an attacker locks a victim
+// by submitting wrong guesses). It is replaced by the adaptive policy (high
+// failure-velocity → step_up/deny) plus a HIGH absolute per-IP failed-login
+// backstop in the auth service. The per-IP RateLimiter above remains a general
+// request-rate guard.

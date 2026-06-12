@@ -19,6 +19,7 @@ security invariants below take precedence over speed or convenience.
   - 0009 behavioral feature schema, position-indexed capture & enrollment lifecycle
   - 0010 Mahalanobis→χ² scoring & offline detector comparison (Killourhy & Maxion)
   - 0011 contextual risk signals (new-device, geovelocity, time-of-day, failure-velocity)
+  - 0012 adaptive policy + enforcement + TOTP step-up (combiner, bands, brute-force model)
 - `docs/threat-model.md` — assets, adversaries, trust boundaries.
 
 ## Non-negotiable security invariants

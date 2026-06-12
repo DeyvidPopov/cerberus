@@ -5,7 +5,7 @@ import type { ServerConfig } from './config';
 import { createAuthenticate } from './middleware/authenticate';
 import { errorHandler } from './middleware/error-handler';
 import { notFound } from './middleware/not-found';
-import { loginRateLimit, rateLimitByIp, rateLimitByUser } from './middleware/rate-limit';
+import { rateLimitByIp, rateLimitByUser } from './middleware/rate-limit';
 import { requestId } from './middleware/request-id';
 import { createSessionsRepository } from './repositories/sessions';
 import { routes } from './routes';
@@ -13,9 +13,12 @@ import { createAuthRouter } from './routes/auth';
 import { createEnrollmentRouter } from './routes/enrollment';
 import { createVaultRouter } from './routes/vault';
 import { createAuthService } from './services/auth';
-import { createBehavioralService } from './services/behavioral';
+import { createEnrollmentService } from './services/enrollment';
 import { NO_GEO_LOOKUP, type GeoLookup } from './services/geoip';
-import { AccountLockout, RateLimiter } from './services/rate-limiter';
+import { RateLimiter } from './services/rate-limiter';
+import { createRiskDecisionService } from './services/risk-decision';
+import { createScoringService } from './services/scoring';
+import { createTotpService } from './services/totp-service';
 import { createVaultService } from './services/vault';
 
 /** Injectable app dependencies (the GeoIP lookup is opened once at startup). */
@@ -26,10 +29,10 @@ export interface AppDeps {
 // Builds the Express app with the fixed middleware order (PROJECT.md §4.3):
 //   request-id → auth → rate-limit → validation → handler → not-found → error
 //
-// Auth is applied only to protected routes; rate-limit + validation are applied
-// per route in that relative order. Dependencies (the DB pool, config, GeoIP
-// lookup) are injected so the app can be built against an ephemeral Postgres and
-// a stub geo lookup in tests.
+// M9: login is the enforcement point (adaptive policy + TOTP step-up); the crude
+// M4 per-account lockout is gone — a high absolute per-IP failed-login backstop
+// lives in the auth service instead. Dependencies are injected so the app can be
+// built against an ephemeral Postgres + a stub geo lookup in tests.
 export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}): Express {
   const app = express();
 
@@ -41,29 +44,45 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
 
   // Shared per-process rate-limit state (PROJECT.md §4.3).
   const ipLimiter = new RateLimiter(config.rateLimit.ipWindowMs, config.rateLimit.ipMaxRequests);
-  const lockout = new AccountLockout(
-    config.rateLimit.accountMaxFailures,
-    config.rateLimit.accountLockoutMs,
-  );
-
-  const vaultLimiter = new RateLimiter(
-    config.rateLimit.vaultWindowMs,
-    config.rateLimit.vaultMaxRequests,
-  );
+  const vaultLimiter = new RateLimiter(config.rateLimit.vaultWindowMs, config.rateLimit.vaultMaxRequests);
   const enrollmentLimiter = new RateLimiter(
     config.rateLimit.vaultWindowMs,
     config.rateLimit.vaultMaxRequests,
   );
 
-  const authService = createAuthService({ pool, config, lockout });
-  const vaultService = createVaultService({ pool });
-  const behavioralService = createBehavioralService({
+  const geoLookup = deps.geoLookup ?? NO_GEO_LOOKUP;
+  const scoringService = createScoringService({
+    pool,
+    baselineEncryptionKey: config.baselineEncryptionKey,
+  });
+  const enrollmentService = createEnrollmentService({
     pool,
     baselineEncryptionKey: config.baselineEncryptionKey,
     minEnrollmentSamples: config.behavioral.minEnrollmentSamples,
-    geoLookup: deps.geoLookup ?? NO_GEO_LOOKUP,
-    contextualConfig: config.contextual,
   });
+  const riskDecisionService = createRiskDecisionService({
+    pool,
+    geoLookup,
+    contextualConfig: config.contextual,
+    weights: config.policy.weights,
+    thresholds: config.policy.thresholds,
+    backstop: config.policy.backstop,
+  });
+  const totpService = createTotpService({
+    pool,
+    encryptionKey: config.baselineEncryptionKey,
+    config: config.policy.totp,
+  });
+
+  const authService = createAuthService({
+    pool,
+    config,
+    riskDecision: riskDecisionService,
+    scoring: scoringService,
+    enrollment: enrollmentService,
+    totp: totpService,
+  });
+  const vaultService = createVaultService({ pool });
   const sessions = createSessionsRepository(pool);
   const authenticate = createAuthenticate(sessions);
 
@@ -71,8 +90,8 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
   app.use(
     createAuthRouter({
       authService,
+      totpService,
       ipLimit: rateLimitByIp(ipLimiter),
-      loginLimit: loginRateLimit(ipLimiter, lockout),
       authenticate,
     }),
   );
@@ -85,7 +104,7 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
   );
   app.use(
     createEnrollmentRouter({
-      behavioralService,
+      enrollmentService,
       authenticate,
       rateLimit: rateLimitByUser(enrollmentLimiter),
     }),

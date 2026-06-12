@@ -11,6 +11,8 @@ import { z } from 'zod';
 // Behavioral feature schema + enrollment DTOs (Milestone 6; ADR-0002, ADR-0009).
 // Re-exported here so the contract has a single import surface (@cerberus/shared-types).
 export * from './behavioral';
+// Used directly below (the login request may carry a keystroke sample, ADR-0012).
+import { EnrollmentSampleRequestSchema } from './behavioral';
 
 /** Editable credential fields, sent to `add`/`update`. */
 export const CredentialInputSchema = z.object({
@@ -122,27 +124,77 @@ export const PreloginResponseSchema = z.object({
 });
 export type PreloginResponse = z.infer<typeof PreloginResponseSchema>;
 
-/** POST /auth/login — prove identity with the derived auth key. */
+/**
+ * POST /auth/login — prove identity with the derived auth key. The optional
+ * `keystrokeSample` is the position-indexed timing of the master-password entry
+ * (durations only, never characters; ADR-0009) used for behavioral scoring at the
+ * enforcement point (ADR-0012). The master password itself never crosses the wire.
+ */
 export const LoginRequestSchema = z.object({
   username: Username,
   authKey: Base64,
   /** Hash of the device fingerprint; the raw fingerprint never leaves the device. */
   deviceFingerprintHash: Base64,
+  keystrokeSample: EnrollmentSampleRequestSchema.optional(),
 });
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 
-export const LoginResponseSchema = z.object({
+/** A TOTP / step-up code: 6–8 digits (RFC 6238). */
+const OtpCode = z.string().regex(/^\d{6,8}$/u, 'must be a 6–8 digit code');
+
+/** Login GRANTED — a full session was issued. */
+export const GrantedLoginResponseSchema = z.object({
+  status: z.literal('granted'),
   /** Opaque session token (the server stores only its hash). */
   sessionToken: z.string(),
   expiresAt: z.string(),
   /** The wrapped vault key, so a fresh client can unwrap it locally and unlock. */
   wrappedVaultKey: Base64,
   wrappedVaultKeyNonce: Base64,
-  device: z.object({
-    isNew: z.boolean(),
-  }),
+  device: z.object({ isNew: z.boolean() }),
 });
+export type GrantedLoginResponse = z.infer<typeof GrantedLoginResponseSchema>;
+
+/** Login requires STEP-UP — no session yet; satisfy the challenge with a TOTP code. */
+export const StepUpRequiredResponseSchema = z.object({
+  status: z.literal('step_up_required'),
+  /** Opaque challenge handle (server stores only its hash); submit with the code. */
+  challengeToken: z.string(),
+  expiresAt: z.string(),
+  methods: z.array(z.literal('totp')),
+});
+export type StepUpRequiredResponse = z.infer<typeof StepUpRequiredResponseSchema>;
+
+/** Login outcome: granted (session) or step-up required. A deny is HTTP 403. */
+export const LoginResponseSchema = z.discriminatedUnion('status', [
+  GrantedLoginResponseSchema,
+  StepUpRequiredResponseSchema,
+]);
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
+
+/** POST /auth/step-up/verify — complete a step-up with a TOTP code → a granted session. */
+export const StepUpVerifyRequestSchema = z.object({
+  challengeToken: z.string().min(1).max(256),
+  code: OtpCode,
+});
+export type StepUpVerifyRequest = z.infer<typeof StepUpVerifyRequestSchema>;
+export const StepUpVerifyResponseSchema = GrantedLoginResponseSchema;
+export type StepUpVerifyResponse = z.infer<typeof StepUpVerifyResponseSchema>;
+
+// --- TOTP enrollment (authenticated; ADR-0012) ---
+
+/** POST /auth/totp/setup → a provisioning URI + base32 secret for an authenticator app. */
+export const TotpSetupResponseSchema = z.object({
+  provisioningUri: z.string(),
+  secret: z.string(),
+});
+export type TotpSetupResponse = z.infer<typeof TotpSetupResponseSchema>;
+
+/** POST /auth/totp/confirm — prove possession of the new secret with a first code. */
+export const TotpConfirmRequestSchema = z.object({ code: OtpCode });
+export type TotpConfirmRequest = z.infer<typeof TotpConfirmRequestSchema>;
+export const TotpConfirmResponseSchema = z.object({ confirmed: z.boolean() });
+export type TotpConfirmResponse = z.infer<typeof TotpConfirmResponseSchema>;
 
 /** GET /auth/me — the authenticated session's identity (non-secret). */
 export const SessionInfoSchema = z.object({

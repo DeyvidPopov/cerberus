@@ -1,17 +1,23 @@
-import { FEATURE_SCHEMA_VERSION, featureDimension } from '@cerberus/shared-types';
 import type { Express } from 'express';
 import type { Pool } from 'pg';
-import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createApp } from '../app';
 import { testServerConfig } from '../test-support/config';
-import { deviceFingerprintHash, makeRegistration, uniqueUsername } from '../test-support/fixtures';
+import {
+  enrolledActiveUser,
+  loginGranted,
+  loginReq,
+  registerAccount,
+  sampleVector,
+  userIdOf,
+} from '../test-support/auth';
+import { featureDimension } from '@cerberus/shared-types';
 import { createTestDb, type TestDb } from '../test-support/postgres';
 
-// 11-key password (".tie5Roanl"+Return) ⇒ dimension 31.
-const DIMENSION = featureDimension(11);
-const REQUIRED = 10; // DEFAULT_BEHAVIORAL_CONFIG.minEnrollmentSamples
+// M9: behavioral scoring runs at the LOGIN decision point (the keystroke sample is
+// sent with /auth/login). These tests assert the behavioral leg of the login
+// risk_events row (ADR-0010 scorer reused, ADR-0012 enforcement point).
 
 let db: TestDb;
 let pool: Pool;
@@ -27,149 +33,83 @@ afterAll(async () => {
   await db.teardown();
 });
 
-function bearer(token: string): string {
-  return `Bearer ${token}`;
+interface Keystroke {
+  score: number | null;
+  confidence?: string;
+  reason?: Record<string, unknown>;
 }
-
-function vec(dimension: number, seed: number): number[] {
-  return Array.from({ length: dimension }, (_unused, j) => 80 + (j % 5) * 12 + Math.sin(seed + j) * 6);
-}
-
-async function authedUser(): Promise<{ token: string; userId: string }> {
-  const username = uniqueUsername();
-  const reg = makeRegistration(username);
-  await request(app).post('/auth/register').send(reg.body).expect(201);
-  const login = await request(app)
-    .post('/auth/login')
-    .send({ username, authKey: reg.authKey, deviceFingerprintHash: deviceFingerprintHash() })
-    .expect(200);
-  const token = String(login.body.sessionToken);
-  const me = await request(app).get('/auth/me').set('Authorization', bearer(token)).expect(200);
-  return { token, userId: String(me.body.userId) };
-}
-
-function submit(token: string, features: number[], extra: Record<string, unknown> = {}) {
-  return request(app)
-    .post('/enrollment/samples')
-    .set('Authorization', bearer(token))
-    .send({ featureSchemaVersion: FEATURE_SCHEMA_VERSION, features, ...extra });
-}
-
-async function enrollToActive(token: string): Promise<void> {
-  for (let i = 1; i <= REQUIRED; i += 1) {
-    await submit(token, vec(DIMENSION, i)).expect(201);
-  }
-}
-
 interface RiskRow {
-  signals: { keystroke?: { score: number | null; reason?: Record<string, unknown> } };
+  signals: { keystroke?: Keystroke };
   behavioral_score: string | null;
-  composite_score: string | null;
-  context_score: string | null;
   policy_band: string | null;
   action_taken: string | null;
-  outcome: string | null;
 }
 
-async function riskEvents(userId: string): Promise<RiskRow[]> {
+async function latest(userId: string): Promise<RiskRow> {
   const result = await pool.query<RiskRow>(
-    `SELECT signals, behavioral_score, composite_score, context_score, policy_band, action_taken, outcome
-     FROM risk_events WHERE user_id = $1 ORDER BY occurred_at`,
+    `SELECT signals, behavioral_score, policy_band, action_taken
+     FROM risk_events WHERE user_id = $1 ORDER BY occurred_at DESC LIMIT 1`,
     [userId],
   );
-  return result.rows;
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error('no risk_events row');
+  }
+  return row;
 }
 
-async function scoredEvents(userId: string): Promise<RiskRow[]> {
-  return (await riskEvents(userId)).filter((e) => e.outcome === 'scored');
-}
+describe('behavioral scoring at login (ADR-0010/0012)', () => {
+  it('scores an active user’s keystroke sample (score + structured reason)', async () => {
+    const { acct, userId } = await enrolledActiveUser(app);
+    // Log in from the SAME device with a sample close to the enrollment data.
+    await loginGranted(app, acct, { sample: sampleVector(3) });
 
-describe('live scoring — an active user is scored and logged (ADR-0010)', () => {
-  it('writes a SCORED risk_events row with the behavioral score + structured reason', async () => {
-    const { token, userId } = await authedUser();
-    await enrollToActive(token);
-
-    // A post-activation submission is SCORED.
-    await submit(token, vec(DIMENSION, 42)).expect(201);
-
-    const scored = await scoredEvents(userId);
-    expect(scored).toHaveLength(1);
-    const event = scored[0];
-    expect(event).toBeDefined();
-    if (event === undefined) {
-      return;
-    }
-
-    expect(event.behavioral_score).not.toBeNull();
-    const score = Number(event.behavioral_score);
-    expect(score).toBeGreaterThanOrEqual(0);
-    expect(score).toBeLessThanOrEqual(1);
-
-    const keystroke = event.signals.keystroke;
-    expect(keystroke?.score).toBeCloseTo(score, 10);
-    const reason = keystroke?.reason ?? {};
-    expect(Object.keys(reason).sort()).toEqual(
-      ['distance', 'distanceSquared', 'dof', 'modelVersion', 'pValue', 'sampleCount'].sort(),
+    const row = await latest(userId);
+    const keystroke = row.signals.keystroke;
+    expect(keystroke?.confidence).toBe('normal');
+    expect(typeof keystroke?.score).toBe('number');
+    expect(row.behavioral_score).not.toBeNull();
+    expect(Object.keys(keystroke?.reason ?? {})).toEqual(
+      expect.arrayContaining(['distance', 'dof', 'pValue']),
     );
-    expect(reason.dof).toBe(DIMENSION);
   });
 
-  it('is LOGGED, never ENFORCED — composite/context score, band, and action are NULL (M9 owns them)', async () => {
-    const { token, userId } = await authedUser();
-    await enrollToActive(token);
-    await submit(token, vec(DIMENSION, 7)).expect(201);
+  it('FAILS CLOSED when an active user sends no sample (suppression is not a bypass)', async () => {
+    const { acct, userId } = await enrolledActiveUser(app); // no TOTP enrolled
+    await loginReq(app, acct, {}).expect(403); // no sample ⇒ fail closed, no second factor ⇒ denied
 
-    const event = (await scoredEvents(userId))[0];
-    expect(event?.composite_score).toBeNull();
-    expect(event?.context_score).toBeNull();
-    expect(event?.policy_band).toBeNull();
-    expect(event?.action_taken).toBeNull();
+    const row = await latest(userId);
+    expect(row.signals.keystroke?.confidence).toBe('missing');
+    expect(row.signals.keystroke?.reason?.status).toBe('missing_sample');
+    expect(row.policy_band).toBe('step_up'); // escalated…
+    expect(row.action_taken).toBe('denied'); // …and enforced as denial
   });
 
-  it('PRIVACY: the risk_events row carries the score + reason, NOT the raw vector', async () => {
-    const { token, userId } = await authedUser();
-    await enrollToActive(token);
-    const sample = vec(DIMENSION, 3);
-    sample[0] = 31337; // sentinel that must NOT survive into the log
-    await submit(token, sample).expect(201);
+  it('FAILS CLOSED on a dimension mismatch (a malformed sample is not a bypass)', async () => {
+    const { acct, userId } = await enrolledActiveUser(app);
+    await loginReq(app, acct, { sample: sampleVector(1, featureDimension(5)) }).expect(403); // dim 13
 
-    const serialized = JSON.stringify(await scoredEvents(userId));
+    const row = await latest(userId);
+    expect(row.signals.keystroke?.confidence).toBe('missing');
+    expect(row.signals.keystroke?.reason?.cause).toBe('dimension_mismatch');
+  });
+
+  it('an enrolling user’s login is cold-start neutral (not penalized)', async () => {
+    const acct = await registerAccount(app);
+    const token = await loginGranted(app, acct, { sample: sampleVector(1) });
+    const row = await latest(await userIdOf(app, token));
+    expect(row.signals.keystroke?.confidence).toBe('low');
+    expect(row.signals.keystroke?.reason?.status).toBe('enrolling');
+    expect(row.behavioral_score).toBeNull(); // no real score yet
+  });
+
+  it('PRIVACY: the row carries the score + reason, NOT the raw vector', async () => {
+    const { acct, userId } = await enrolledActiveUser(app);
+    const sample = sampleVector(2);
+    sample[0] = 31337; // sentinel
+    await loginGranted(app, acct, { sample });
+    const serialized = JSON.stringify(await latest(userId));
     expect(serialized).not.toContain('31337');
-    expect(serialized).not.toContain('features');
-    expect(serialized).not.toContain('vector');
-  });
-});
-
-describe('live scoring — guards (ADR-0010)', () => {
-  it('does NOT score an enrolling user (no behavioral score yet)', async () => {
-    const { token, userId } = await authedUser();
-    await submit(token, vec(DIMENSION, 1)).expect(201);
-    await submit(token, vec(DIMENSION, 2)).expect(201);
-    // Contextual rows are logged, but none is behaviorally scored.
-    expect(await scoredEvents(userId)).toHaveLength(0);
-    const all = await riskEvents(userId);
-    expect(all.length).toBeGreaterThan(0);
-    expect(all.every((e) => e.behavioral_score === null)).toBe(true);
-  });
-
-  it('records a dimension mismatch as not-scored (never a crash)', async () => {
-    const { token, userId } = await authedUser();
-    await enrollToActive(token);
-    await submit(token, vec(featureDimension(5), 9)).expect(201); // dim 13, wrong baseline dim
-
-    const notScored = (await riskEvents(userId)).filter((e) => e.outcome === 'not_scored');
-    expect(notScored).toHaveLength(1);
-    expect(notScored[0]?.behavioral_score).toBeNull();
-    expect(notScored[0]?.signals.keystroke?.reason?.cause).toBe('dimension_mismatch');
-  });
-
-  it('records a schema-version mismatch as not-scored (never a crash)', async () => {
-    const { token, userId } = await authedUser();
-    await enrollToActive(token);
-    await submit(token, vec(DIMENSION, 5), { featureSchemaVersion: 999 }).expect(201);
-
-    const notScored = (await riskEvents(userId)).filter((e) => e.outcome === 'not_scored');
-    expect(notScored).toHaveLength(1);
-    expect(notScored[0]?.signals.keystroke?.reason?.cause).toBe('schema_version_mismatch');
+    expect(serialized).not.toContain('"features"');
   });
 });

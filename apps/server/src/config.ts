@@ -1,11 +1,27 @@
 // Application configuration, read from the environment (PROJECT.md §7).
 // Read once at startup. Secrets are never logged (PROJECT.md §5).
 import {
+  DEFAULT_BACKSTOP_CONFIG,
+  DEFAULT_BAND_THRESHOLDS,
   DEFAULT_BEHAVIORAL_CONFIG,
+  DEFAULT_COMBINER_WEIGHTS,
   DEFAULT_CONTEXTUAL_CONFIG,
+  DEFAULT_TOTP_CONFIG,
+  type BackstopConfig,
+  type BandThresholds,
   type BehavioralConfig,
+  type CombinerWeights,
   type ContextualConfig,
+  type TotpConfig,
 } from './risk/config';
+
+/** Adaptive-policy config (M9 / ADR-0012): combiner weights, band thresholds, brute-force backstop, TOTP. */
+export interface PolicyConfig {
+  readonly weights: CombinerWeights;
+  readonly thresholds: BandThresholds;
+  readonly backstop: BackstopConfig;
+  readonly totp: TotpConfig;
+}
 
 export interface RateLimitConfig {
   /** Per-IP sliding window for login/prelogin. */
@@ -37,6 +53,8 @@ export interface ServerConfig {
   readonly behavioral: BehavioralConfig;
   /** Contextual risk-signal config (ADR-0011). */
   readonly contextual: ContextualConfig;
+  /** Adaptive-policy config (ADR-0012). */
+  readonly policy: PolicyConfig;
   /**
    * Path to a local MaxMind GeoLite2-City .mmdb for offline geo (ADR-0011). When
    * unset/missing the geovelocity signal stays neutral. Never an external API.
@@ -58,6 +76,11 @@ const DEV_BASELINE_KEY_HEX =
 
 function intFromEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function floatFromEnv(name: string, fallback: number): number {
+  const parsed = Number.parseFloat(process.env[name] ?? '');
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
@@ -135,6 +158,19 @@ export function loadConfig(): ServerConfig {
           DEFAULT_CONTEXTUAL_CONFIG.failureVelocity.windowMinutes,
         ),
       },
+    },
+    policy: {
+      weights: DEFAULT_COMBINER_WEIGHTS,
+      thresholds: {
+        stepUp: floatFromEnv('BAND_STEP_UP', DEFAULT_BAND_THRESHOLDS.stepUp),
+        deny: floatFromEnv('BAND_DENY', DEFAULT_BAND_THRESHOLDS.deny),
+      },
+      backstop: {
+        ...DEFAULT_BACKSTOP_CONFIG,
+        ipHardCap: intFromEnv('BACKSTOP_IP_CAP', DEFAULT_BACKSTOP_CONFIG.ipHardCap),
+        accountStepUpCap: intFromEnv('BACKSTOP_ACCOUNT_CAP', DEFAULT_BACKSTOP_CONFIG.accountStepUpCap),
+      },
+      totp: DEFAULT_TOTP_CONFIG,
     },
     geoipDbPath: process.env.GEOIP_DB_PATH,
     trustProxy: trustProxyFromEnv(),

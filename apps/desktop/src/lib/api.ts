@@ -9,6 +9,9 @@ import {
   LoginResponseSchema,
   PreloginResponseSchema,
   RegisterResponseSchema,
+  StepUpVerifyResponseSchema,
+  TotpConfirmResponseSchema,
+  TotpSetupResponseSchema,
   VaultItemListSchema,
   VaultItemSchema,
   VaultKeyResponseSchema,
@@ -22,6 +25,11 @@ import {
   type PreloginResponse,
   type RegisterRequest,
   type RegisterResponse,
+  type StepUpVerifyRequest,
+  type StepUpVerifyResponse,
+  type TotpConfirmRequest,
+  type TotpConfirmResponse,
+  type TotpSetupResponse,
   type UpdateVaultItemRequest,
   type VaultItem,
   type VaultKeyResponse,
@@ -69,6 +77,11 @@ export async function prelogin(req: PreloginRequest): Promise<PreloginResponse> 
 
 export async function login(req: LoginRequest): Promise<LoginResponse> {
   return postJson('/auth/login', req, LoginResponseSchema);
+}
+
+/** POST /auth/step-up/verify — complete a step-up with a TOTP code (→ a granted session). */
+export async function verifyStepUp(req: StepUpVerifyRequest): Promise<StepUpVerifyResponse> {
+  return postJson('/auth/step-up/verify', req, StepUpVerifyResponseSchema);
 }
 
 // --- Session-authenticated vault sync (Milestone 5). Bearer token on every call. ---
@@ -144,4 +157,18 @@ export async function submitEnrollmentSample(
 
 export async function getEnrollmentStatus(token: string): Promise<EnrollmentStatus> {
   return authed('GET', '/enrollment/status', token, EnrollmentStatusSchema);
+}
+
+// --- TOTP step-up enrollment (Milestone 9). Authenticated; the secret never leaves
+// the server in plaintext beyond this setup URI shown once to the user. ---
+
+export async function setupTotp(token: string): Promise<TotpSetupResponse> {
+  return authed('POST', '/auth/totp/setup', token, TotpSetupResponseSchema, {});
+}
+
+export async function confirmTotp(
+  token: string,
+  body: TotpConfirmRequest,
+): Promise<TotpConfirmResponse> {
+  return authed('POST', '/auth/totp/confirm', token, TotpConfirmResponseSchema, body);
 }

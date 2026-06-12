@@ -1,8 +1,8 @@
-import { FEATURE_SCHEMA_VERSION, type EnrollmentStatus } from '@cerberus/shared-types';
+import type { EnrollmentStatus, GrantedLoginResponse } from '@cerberus/shared-types';
 import { useState } from 'react';
 
-import { submitEnrollmentSample } from '../../lib/api';
-import { loginAccount, registerAccount } from '../../lib/auth';
+import { getEnrollmentStatus } from '../../lib/api';
+import { completeStepUp, loginAccount, registerAccount } from '../../lib/auth';
 import { useKeystrokeCapture } from '../../lib/keystroke-capture';
 import { errorMessage } from '../../lib/tauri';
 
@@ -18,16 +18,12 @@ interface AuthScreenProps {
 
 type Mode = 'login' | 'register';
 
-// Entry screen replacing M3's auto-init-on-first-unlock. Registration requires a
-// confirmation field (prevents the M3 typo-lockout). The master password lives in
-// component state only until it is handed to the Rust derivation, then it is
-// cleared (PROJECT.md §4.2); it is never written to browser storage and never
-// sent to the server.
-//
-// Milestone 6: the password input's KEYSTROKE TIMING (positions only, never
-// characters — see lib/keystroke) is captured during login and, after a
-// SUCCESSFUL login, submitted to the enrollment endpoint as a position-indexed
-// feature vector. The password value itself still flows only to Rust.
+// Entry screen. The master password lives in component state only until handed to
+// the Rust derivation, then cleared (PROJECT.md §4.2). The password input's
+// KEYSTROKE TIMING (positions only, never characters — see lib/keystroke) is
+// captured during login and sent WITH the login request as a position-indexed
+// feature vector; the server runs the adaptive policy (ADR-0012) and either grants
+// a session or requires a TOTP step-up. The password value still flows only to Rust.
 export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [mode, setMode] = useState<Mode>('login');
   const [username, setUsername] = useState('');
@@ -35,50 +31,63 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // When a login bands to step_up, hold the challenge until the TOTP code is entered.
+  const [challengeToken, setChallengeToken] = useState<string | null>(null);
+  const [totpCode, setTotpCode] = useState('');
   const capture = useKeystrokeCapture();
 
   const clearSecrets = (): void => {
     setPassword('');
     setConfirm('');
+    setTotpCode('');
+  };
+
+  const finishGranted = async (session: GrantedLoginResponse): Promise<void> => {
+    let enrollment: EnrollmentStatus | null = null;
+    try {
+      enrollment = await getEnrollmentStatus(session.sessionToken);
+    } catch {
+      enrollment = null; // best-effort; never block the unlock
+    }
+    setChallengeToken(null);
+    clearSecrets();
+    onAuthenticated({ token: session.sessionToken, enrollment });
   };
 
   const doRegister = async (): Promise<void> => {
     await registerAccount(username, password);
-    capture.reset(); // discard any captured timing; enrollment happens on login
+    capture.reset();
     clearSecrets();
     onAuthenticated({ token: null, enrollment: null });
   };
 
   const doLogin = async (): Promise<void> => {
-    const session = await loginAccount(username, password);
-    // The capture is meaningful only after a successful login. Submitting the
-    // sample is best-effort — enrollment must NEVER block authentication.
+    // The captured keystroke timing is sent with the login request itself.
     const features = capture.takeSample();
-    let enrollment: EnrollmentStatus | null = null;
-    if (features !== null) {
-      try {
-        enrollment = await submitEnrollmentSample(session.sessionToken, {
-          featureSchemaVersion: FEATURE_SCHEMA_VERSION,
-          features,
-        });
-      } catch {
-        enrollment = null;
-      }
+    const outcome = await loginAccount(username, password, features);
+    if (outcome.kind === 'granted') {
+      await finishGranted(outcome.session);
+    } else {
+      // Step-up required: keep the challenge and prompt for a TOTP code.
+      setChallengeToken(outcome.challengeToken);
+      clearSecrets();
     }
-    clearSecrets();
-    onAuthenticated({ token: session.sessionToken, enrollment });
   };
 
-  const submit = (): void => {
-    setError(null);
-    if (mode === 'register' && password !== confirm) {
-      setError('Passwords do not match.');
+  const doStepUp = async (): Promise<void> => {
+    if (challengeToken === null) {
       return;
     }
+    const session = await completeStepUp({ challengeToken, code: totpCode });
+    await finishGranted(session);
+  };
+
+  const run = (action: () => Promise<void>): void => {
+    setError(null);
     setBusy(true);
-    void (mode === 'register' ? doRegister() : doLogin())
+    void action()
       .catch((e: unknown) => {
-        capture.reset(); // a fresh capture starts on the next attempt
+        capture.reset();
         clearSecrets();
         setError(errorMessage(e));
       })
@@ -87,12 +96,68 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       });
   };
 
+  const submit = (): void => {
+    if (mode === 'register' && password !== confirm) {
+      setError('Passwords do not match.');
+      return;
+    }
+    run(mode === 'register' ? doRegister : doLogin);
+  };
+
   const toggleMode = (): void => {
     setMode((current) => (current === 'login' ? 'register' : 'login'));
     setError(null);
+    setChallengeToken(null);
     capture.reset();
     clearSecrets();
   };
+
+  // Step-up prompt: a second factor is required before the session is issued.
+  if (challengeToken !== null) {
+    return (
+      <main className="screen">
+        <h1>Cerberus</h1>
+        <h2>Verify it’s you</h2>
+        <p>Enter the 6-digit code from your authenticator app.</p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(doStepUp);
+          }}
+        >
+          <input
+            aria-label="Authenticator code"
+            placeholder="123456"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            value={totpCode}
+            onChange={(e) => {
+              setTotpCode(e.target.value);
+            }}
+            disabled={busy}
+          />
+          <button type="submit" disabled={busy || totpCode.length < 6}>
+            {busy ? 'Verifying…' : 'Verify'}
+          </button>
+        </form>
+        <button
+          type="button"
+          onClick={() => {
+            setChallengeToken(null);
+            setError(null);
+          }}
+          disabled={busy}
+        >
+          Cancel
+        </button>
+        {error !== null && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
+      </main>
+    );
+  }
 
   return (
     <main className="screen">

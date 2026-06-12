@@ -18,12 +18,20 @@ export interface InsertRiskEventInput {
   signals: unknown;
   /** Behavioral sub-score in [0,1], or null when not scored / still enrolling. */
   behavioralScore: number | null;
+  /** Contextual aggregate ∈ [0,1] (M9 combiner), or null. */
+  contextScore: number | null;
+  /** Overall composite ∈ [0,1] (M9 combiner), or null. */
+  compositeScore: number | null;
+  /** Enforcement band (M9 policy), or null when only logging. */
+  policyBand: PolicyBand | null;
+  /** Action taken (granted / step_up_required / denied / step_up_bootstrap …), or null. */
+  actionTaken: string | null;
   /** Coarse geo (country/region ISO codes) — never precise coordinates. */
   geoCountry: string | null;
   geoRegion: string | null;
   /** Truncated client IP — never the full address. */
   ipTruncated: string | null;
-  /** Descriptive outcome of the behavioral leg (scored / not_scored / enrolling). */
+  /** Descriptive outcome (e.g. step-up passed/failed). */
   outcome: string | null;
 }
 
@@ -88,22 +96,27 @@ export interface PreviousLocation {
 export function createRiskEventsRepository(db: Db) {
   return {
     /**
-     * Append one login's risk evaluation. composite_score / context_score /
-     * policy_band / action_taken are intentionally left NULL (M9 owns them).
+     * Append one login's risk evaluation: all five sub-scores + the M9 combiner
+     * output (context_score, composite_score), the enforced band, and the action.
      * Returns the new row id.
      */
     async insert(input: InsertRiskEventInput): Promise<{ id: string }> {
       const result = await db.query<{ id: string }>(
         `INSERT INTO risk_events
-           (user_id, device_id, signals, behavioral_score,
+           (user_id, device_id, signals, behavioral_score, context_score,
+            composite_score, policy_band, action_taken,
             geo_country, geo_region, ip_truncated, outcome)
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8)
+         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING id`,
         [
           input.userId,
           input.deviceId,
           JSON.stringify(input.signals),
           input.behavioralScore,
+          input.contextScore,
+          input.compositeScore,
+          input.policyBand,
+          input.actionTaken,
           input.geoCountry,
           input.geoRegion,
           input.ipTruncated,

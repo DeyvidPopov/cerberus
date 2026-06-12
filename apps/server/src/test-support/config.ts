@@ -5,7 +5,14 @@
 import { randomBytes } from 'node:crypto';
 
 import type { ServerConfig } from '../config';
-import { DEFAULT_BEHAVIORAL_CONFIG, DEFAULT_CONTEXTUAL_CONFIG } from '../risk/config';
+import {
+  DEFAULT_BACKSTOP_CONFIG,
+  DEFAULT_BAND_THRESHOLDS,
+  DEFAULT_BEHAVIORAL_CONFIG,
+  DEFAULT_COMBINER_WEIGHTS,
+  DEFAULT_CONTEXTUAL_CONFIG,
+  DEFAULT_TOTP_CONFIG,
+} from '../risk/config';
 
 export function testServerConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return {
@@ -27,6 +34,12 @@ export function testServerConfig(overrides: Partial<ServerConfig> = {}): ServerC
     baselineEncryptionKey: randomBytes(32),
     behavioral: { ...DEFAULT_BEHAVIORAL_CONFIG },
     contextual: { ...DEFAULT_CONTEXTUAL_CONFIG },
+    policy: {
+      weights: DEFAULT_COMBINER_WEIGHTS,
+      thresholds: DEFAULT_BAND_THRESHOLDS,
+      backstop: DEFAULT_BACKSTOP_CONFIG,
+      totp: DEFAULT_TOTP_CONFIG,
+    },
     geoipDbPath: undefined,
     // Trust proxy so tests can drive the client IP via X-Forwarded-For.
     trustProxy: true,
