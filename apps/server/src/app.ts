@@ -13,7 +13,7 @@ import { createAuthRouter } from './routes/auth';
 import { createEnrollmentRouter } from './routes/enrollment';
 import { createVaultRouter } from './routes/vault';
 import { createAuthService } from './services/auth';
-import { createEnrollmentService } from './services/enrollment';
+import { createBehavioralService } from './services/behavioral';
 import { AccountLockout, RateLimiter } from './services/rate-limiter';
 import { createVaultService } from './services/vault';
 
@@ -47,7 +47,7 @@ export function createApp(pool: Pool, config: ServerConfig): Express {
 
   const authService = createAuthService({ pool, config, lockout });
   const vaultService = createVaultService({ pool });
-  const enrollmentService = createEnrollmentService({
+  const behavioralService = createBehavioralService({
     pool,
     baselineEncryptionKey: config.baselineEncryptionKey,
     minEnrollmentSamples: config.behavioral.minEnrollmentSamples,
@@ -73,7 +73,7 @@ export function createApp(pool: Pool, config: ServerConfig): Express {
   );
   app.use(
     createEnrollmentRouter({
-      enrollmentService,
+      behavioralService,
       authenticate,
       rateLimit: rateLimitByUser(enrollmentLimiter),
     }),

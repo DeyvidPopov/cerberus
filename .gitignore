@@ -41,6 +41,13 @@ apps/desktop/src-tauri/target/
 .vite/
 
 # ---------------------------------------------------------------------------
+# Evaluation datasets — real human keystroke captures (PROJECT.md §5).
+# NEVER commit the raw dataset. Only committed scripts + derived RESULTS are
+# tracked; the dataset is fetched locally into this gitignored dir (ADR-0010).
+# ---------------------------------------------------------------------------
+docs/evaluation/data/
+
+# ---------------------------------------------------------------------------
 # Logs & misc
 # ---------------------------------------------------------------------------
 *.log

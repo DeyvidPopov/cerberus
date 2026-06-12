@@ -17,6 +17,7 @@ security invariants below take precedence over speed or convenience.
   - 0004 tooling baseline · 0005 crypto wire format & domain separation · 0006 desktop architecture
   - 0007 zero-knowledge login handshake · 0008 encrypted blob sync
   - 0009 behavioral feature schema, position-indexed capture & enrollment lifecycle
+  - 0010 Mahalanobis→χ² scoring & offline detector comparison (Killourhy & Maxion)
 - `docs/threat-model.md` — assets, adversaries, trust boundaries.
 
 ## Non-negotiable security invariants

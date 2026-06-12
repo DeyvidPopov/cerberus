@@ -39,3 +39,58 @@ export const DEFAULT_BEHAVIORAL_CONFIG: BehavioralConfig = {
   baselineModelVersion: BASELINE_MODEL_VERSION,
   covarianceRidge: COVARIANCE_RIDGE,
 };
+
+// ---------------------------------------------------------------------------
+// Offline evaluation (Part B / ADR-0010): the Killourhy & Maxion (2009) protocol
+// and detector hyperparameters. Named config (PROJECT.md §4.4) — no magic numbers
+// scattered in the harness; every value here is tunable for the thesis sweeps.
+// ---------------------------------------------------------------------------
+
+/** Fixed RNG seed → the harness reproduces identical numbers on every run. */
+export const EVALUATION_SEED = 20_240_601;
+
+/** Killourhy & Maxion: per subject, the first 200 genuine reps are the training set. */
+export const KM_TRAIN_SIZE = 200;
+
+/** Killourhy & Maxion: the first 5 reps of every OTHER subject are the impostor set. */
+export const KM_IMPOSTOR_REPS = 5;
+
+/** Isolation forest (Liu et al. 2008): ensemble size + subsample size ψ. */
+export const IFOREST_TREES = 100;
+export const IFOREST_SUBSAMPLE = 256;
+
+/**
+ * One-class SVM (Schölkopf): ν bounds the training outlier fraction; the RBF γ is
+ * '1/d on standardized features' (sklearn-style 'scale'); SMO stopping tolerance
+ * and an iteration cap (multiplier × N) for the working-set solver.
+ */
+export const OCSVM_NU = 0.1;
+export const OCSVM_GAMMA_OVER_D = 1; // γ = OCSVM_GAMMA_OVER_D / d
+export const OCSVM_TOLERANCE = 1e-4;
+export const OCSVM_MAX_ITERS_PER_POINT = 50;
+
+export interface EvaluationConfig {
+  readonly seed: number;
+  readonly trainSize: number;
+  readonly impostorReps: number;
+  readonly iforest: { readonly trees: number; readonly subsampleSize: number };
+  readonly ocsvm: {
+    readonly nu: number;
+    readonly gammaOverD: number;
+    readonly tolerance: number;
+    readonly maxItersPerPoint: number;
+  };
+}
+
+export const DEFAULT_EVALUATION_CONFIG: EvaluationConfig = {
+  seed: EVALUATION_SEED,
+  trainSize: KM_TRAIN_SIZE,
+  impostorReps: KM_IMPOSTOR_REPS,
+  iforest: { trees: IFOREST_TREES, subsampleSize: IFOREST_SUBSAMPLE },
+  ocsvm: {
+    nu: OCSVM_NU,
+    gammaOverD: OCSVM_GAMMA_OVER_D,
+    tolerance: OCSVM_TOLERANCE,
+    maxItersPerPoint: OCSVM_MAX_ITERS_PER_POINT,
+  },
+};

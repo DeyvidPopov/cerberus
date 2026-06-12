@@ -11,8 +11,19 @@
 //   - every decision is logged as a structured record (the evaluation dataset);
 //   - scoring is deterministic given the same inputs + seeded model state.
 //
-// Milestone 6 lands the behavioral ENROLLMENT half (no scoring yet): the named
-// config, the baseline fit + covariance regularization, and the CMU loader.
+// Milestone 6 lands the behavioral ENROLLMENT half: named config, the baseline
+// fit + covariance regularization, and the CMU loader.
 export * from './config';
 export * from './baseline-model';
 export * from './cmu-loader';
+
+// Milestone 7 lands SCORING + offline evaluation: Mahalanobis → chi-squared live
+// scorer, the EER computation, the three comparison detectors, and the Killourhy
+// & Maxion harness.
+export * from './chi-squared';
+export * from './mahalanobis';
+export * from './scorer';
+export * from './eer';
+export * from './evaluation';
+export * from './detectors';
+export * from './random';

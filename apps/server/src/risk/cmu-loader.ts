@@ -25,24 +25,36 @@ const SUBJECT_COLUMN = 'subject';
 
 export interface CmuSample {
   subject: string;
+  /** Typing session (1..8 in the CMU dataset); 0 if the column is absent. */
+  sessionIndex: number;
+  /** Repetition within the dataset; falls back to file order if the column is absent. */
+  rep: number;
   /** Position-indexed feature vector (ms), produced by the shared extractor. */
   features: number[];
 }
 
 interface ColumnLayout {
   subjectIndex: number;
+  sessionIndexIndex: number; // -1 if absent
+  repIndex: number; // -1 if absent
   holdIndices: number[];
   downDownIndices: number[];
 }
 
 function classifyColumns(header: readonly string[]): ColumnLayout {
   let subjectIndex = -1;
+  let sessionIndexIndex = -1;
+  let repIndex = -1;
   const holdIndices: number[] = [];
   const downDownIndices: number[] = [];
   header.forEach((rawName, index) => {
     const name = rawName.trim();
     if (name === SUBJECT_COLUMN) {
       subjectIndex = index;
+    } else if (name === 'sessionIndex') {
+      sessionIndexIndex = index;
+    } else if (name === 'rep') {
+      repIndex = index;
     } else if (name.startsWith('H.')) {
       holdIndices.push(index);
     } else if (name.startsWith('DD.')) {
@@ -57,7 +69,7 @@ function classifyColumns(header: readonly string[]): ColumnLayout {
   if (holdIndices.length < 2 || downDownIndices.length !== holdIndices.length - 1) {
     throw new Error('CMU dataset has an unexpected H./DD. column layout');
   }
-  return { subjectIndex, holdIndices, downDownIndices };
+  return { subjectIndex, sessionIndexIndex, repIndex, holdIndices, downDownIndices };
 }
 
 /**
@@ -78,15 +90,20 @@ function reconstructTimings(holdsSec: readonly number[], downDownSec: readonly n
   return timings;
 }
 
-function parseRow(cols: readonly string[], layout: ColumnLayout): CmuSample {
+function parseRow(cols: readonly string[], layout: ColumnLayout, fileIndex: number): CmuSample {
   const holdsSec = layout.holdIndices.map((i) => Number(cols[i]));
   const downDownSec = layout.downDownIndices.map((i) => Number(cols[i]));
   if ([...holdsSec, ...downDownSec].some((v) => !Number.isFinite(v))) {
     throw new Error('CMU row has a non-numeric timing value');
   }
   const timings = reconstructTimings(holdsSec, downDownSec);
+  const sessionIndex =
+    layout.sessionIndexIndex >= 0 ? Number(cols[layout.sessionIndexIndex]) : 0;
+  const rep = layout.repIndex >= 0 ? Number(cols[layout.repIndex]) : fileIndex;
   return {
     subject: (cols[layout.subjectIndex] ?? '').trim(),
+    sessionIndex: Number.isFinite(sessionIndex) ? sessionIndex : 0,
+    rep: Number.isFinite(rep) ? rep : fileIndex,
     features: extractFeatureVector(timings),
   };
 }
@@ -99,7 +116,7 @@ export function parseCmuCsv(content: string): CmuSample[] {
     throw new Error('CMU dataset is empty');
   }
   const layout = classifyColumns(headerLine.split(','));
-  return lines.slice(1).map((line) => parseRow(line.split(','), layout));
+  return lines.slice(1).map((line, i) => parseRow(line.split(','), layout, i));
 }
 
 /** Load and parse a CMU dataset CSV from disk. */
@@ -110,4 +127,33 @@ export function loadCmuDataset(path: string): CmuSample[] {
 /** All feature vectors for one subject (a per-subject baseline fixture). */
 export function vectorsForSubject(samples: readonly CmuSample[], subject: string): number[][] {
   return samples.filter((s) => s.subject === subject).map((s) => s.features);
+}
+
+/**
+ * Group samples by subject, ordered by (sessionIndex, rep) within each subject —
+ * the canonical order the Killourhy & Maxion protocol assumes ("first 200 reps",
+ * "first 5 reps"). The CMU file is already sorted this way; sorting makes the
+ * protocol order explicit and robust regardless of input row order.
+ */
+export function groupCmuBySubject(samples: readonly CmuSample[]): Map<string, number[][]> {
+  const bySubject = new Map<string, CmuSample[]>();
+  for (const sample of samples) {
+    const existing = bySubject.get(sample.subject);
+    if (existing) {
+      existing.push(sample);
+    } else {
+      bySubject.set(sample.subject, [sample]);
+    }
+  }
+  const grouped = new Map<string, number[][]>();
+  for (const [subject, rows] of bySubject) {
+    const ordered = [...rows].sort((a, b) =>
+      a.sessionIndex !== b.sessionIndex ? a.sessionIndex - b.sessionIndex : a.rep - b.rep,
+    );
+    grouped.set(
+      subject,
+      ordered.map((r) => r.features),
+    );
+  }
+  return grouped;
 }
