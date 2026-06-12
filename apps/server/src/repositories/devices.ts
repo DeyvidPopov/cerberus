@@ -6,6 +6,12 @@ export interface DeviceEnrollment {
   isNew: boolean;
 }
 
+export interface DeviceRecord {
+  id: string;
+  trusted: boolean;
+  firstSeen: Date;
+}
+
 export function createDevicesRepository(db: Db) {
   return {
     /**
@@ -27,6 +33,19 @@ export function createDevicesRepository(db: Db) {
         throw new Error('device upsert returned no row');
       }
       return { id: row.id, isNew: row.is_new };
+    },
+
+    /**
+     * Fetch one of the user's devices by id (scoped to user_id — defense against
+     * IDOR). Used by the new-device signal to read trusted + first_seen.
+     */
+    async findForUser(userId: string, id: string): Promise<DeviceRecord | null> {
+      const result = await db.query<{ id: string; trusted: boolean; first_seen: Date }>(
+        `SELECT id, trusted, first_seen FROM devices WHERE id = $1 AND user_id = $2`,
+        [id, userId],
+      );
+      const row = result.rows[0];
+      return row ? { id: row.id, trusted: row.trusted, firstSeen: row.first_seen } : null;
     },
   };
 }

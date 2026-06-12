@@ -14,17 +14,27 @@ import { createEnrollmentRouter } from './routes/enrollment';
 import { createVaultRouter } from './routes/vault';
 import { createAuthService } from './services/auth';
 import { createBehavioralService } from './services/behavioral';
+import { NO_GEO_LOOKUP, type GeoLookup } from './services/geoip';
 import { AccountLockout, RateLimiter } from './services/rate-limiter';
 import { createVaultService } from './services/vault';
+
+/** Injectable app dependencies (the GeoIP lookup is opened once at startup). */
+export interface AppDeps {
+  geoLookup?: GeoLookup;
+}
 
 // Builds the Express app with the fixed middleware order (PROJECT.md §4.3):
 //   request-id → auth → rate-limit → validation → handler → not-found → error
 //
 // Auth is applied only to protected routes; rate-limit + validation are applied
-// per route in that relative order. Dependencies (the DB pool, config) are
-// injected so the app can be built against an ephemeral Postgres in tests.
-export function createApp(pool: Pool, config: ServerConfig): Express {
+// per route in that relative order. Dependencies (the DB pool, config, GeoIP
+// lookup) are injected so the app can be built against an ephemeral Postgres and
+// a stub geo lookup in tests.
+export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}): Express {
   const app = express();
+
+  // Read the real client IP behind a reverse proxy (the M4 open item; ADR-0011).
+  app.set('trust proxy', config.trustProxy);
 
   app.use(requestId);
   app.use(express.json());
@@ -51,6 +61,8 @@ export function createApp(pool: Pool, config: ServerConfig): Express {
     pool,
     baselineEncryptionKey: config.baselineEncryptionKey,
     minEnrollmentSamples: config.behavioral.minEnrollmentSamples,
+    geoLookup: deps.geoLookup ?? NO_GEO_LOOKUP,
+    contextualConfig: config.contextual,
   });
   const sessions = createSessionsRepository(pool);
   const authenticate = createAuthenticate(sessions);

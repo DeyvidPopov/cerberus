@@ -94,3 +94,72 @@ export const DEFAULT_EVALUATION_CONFIG: EvaluationConfig = {
     maxItersPerPoint: OCSVM_MAX_ITERS_PER_POINT,
   },
 };
+
+// ---------------------------------------------------------------------------
+// Contextual risk signals (M8 / ADR-0011). Every threshold/window is named here
+// (PROJECT.md §4.4) so the signals are tunable without code changes. Scores are
+// LOGGED, never enforced this milestone; the combiner/policy is M9.
+// ---------------------------------------------------------------------------
+
+/** new-device: sub-scores by device status. */
+export interface NewDeviceConfig {
+  readonly knownTrustedScore: number;
+  readonly knownUntrustedScore: number;
+  readonly unseenScore: number;
+}
+
+/** geovelocity: speed band mapping implied travel speed to a [0,1] score. */
+export interface GeovelocityConfig {
+  /** At/below this implied speed the score is 0 (normal travel). */
+  readonly normalKmh: number;
+  /** At/above this implied speed the score is 1 (physically impossible). */
+  readonly impossibleKmh: number;
+  /** Floor on the time delta (minutes) to bound the implied speed (avoid ÷0). */
+  readonly minDeltaMinutes: number;
+}
+
+/** time-of-day: circular-hour deviation model. */
+export interface TimeOfDayConfig {
+  /** Minimum prior logins before judging (else NEUTRAL — cold start). */
+  readonly minHistory: number;
+  /** Floor on the circular dispersion (hours) so tight users aren't over-flagged. */
+  readonly dispersionFloorHours: number;
+  /** Deviation (in dispersion units) at which the score saturates to 1. */
+  readonly saturationZ: number;
+}
+
+/** failure-velocity: recent failed-login rate, per account and per IP. */
+export interface FailureVelocityConfig {
+  readonly windowMinutes: number;
+  /** Failure count (max of account/IP) at which the score saturates to 1. */
+  readonly saturationCount: number;
+}
+
+export interface ContextualConfig {
+  readonly newDevice: NewDeviceConfig;
+  readonly geovelocity: GeovelocityConfig;
+  readonly timeOfDay: TimeOfDayConfig;
+  readonly failureVelocity: FailureVelocityConfig;
+}
+
+export const DEFAULT_CONTEXTUAL_CONFIG: ContextualConfig = {
+  newDevice: {
+    knownTrustedScore: 0,
+    knownUntrustedScore: 0.3,
+    unseenScore: 1,
+  },
+  geovelocity: {
+    normalKmh: 250, // car / fast train
+    impossibleKmh: 1_000, // faster than a commercial flight ⇒ impossible
+    minDeltaMinutes: 1,
+  },
+  timeOfDay: {
+    minHistory: 5,
+    dispersionFloorHours: 1,
+    saturationZ: 3,
+  },
+  failureVelocity: {
+    windowMinutes: 15,
+    saturationCount: 10,
+  },
+};

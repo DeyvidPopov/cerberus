@@ -107,6 +107,7 @@ describe('sessionsRepository (real Postgres)', () => {
       deviceId: null,
       tokenHash,
       expiresAt: new Date(Date.now() + 60_000),
+      isNewDevice: false,
     });
 
     const found = await repo.findActiveByTokenHash(tokenHash);
@@ -123,6 +124,7 @@ describe('sessionsRepository (real Postgres)', () => {
       deviceId: null,
       tokenHash,
       expiresAt: new Date(Date.now() - 1_000),
+      isNewDevice: false,
     });
 
     expect(await repo.findActiveByTokenHash(tokenHash)).toBeNull();

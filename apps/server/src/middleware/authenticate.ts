@@ -5,6 +5,19 @@ import { hashSessionToken } from '../services/auth-crypto';
 
 const BEARER_PREFIX = 'Bearer ';
 
+/**
+ * The authenticated identity placed on res.locals.session. A superset of the
+ * public SessionInfo DTO: also carries `createdAt` (the login time) for the
+ * contextual risk signals (ADR-0011). Never serialized wholesale to a client.
+ */
+export interface AuthenticatedSession {
+  userId: string;
+  deviceId: string | null;
+  createdAt: Date;
+  /** Whether the device was new at this login (authoritative for new-device). */
+  isNewDevice: boolean;
+}
+
 // Session-auth middleware (the `auth` slot in the §4.3 chain). Verifies the
 // Bearer token by hashing it and looking up an active session; attaches the
 // non-secret identity to res.locals.session. Any failure → 401 (fail closed).
@@ -37,6 +50,12 @@ async function verify(
     return;
   }
 
-  res.locals.session = { userId: session.userId, deviceId: session.deviceId };
+  const authenticated: AuthenticatedSession = {
+    userId: session.userId,
+    deviceId: session.deviceId,
+    createdAt: session.createdAt,
+    isNewDevice: session.isNewDevice,
+  };
+  res.locals.session = authenticated;
   next();
 }

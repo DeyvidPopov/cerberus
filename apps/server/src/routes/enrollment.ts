@@ -2,11 +2,11 @@ import {
   EnrollmentSampleRequestSchema,
   type EnrollmentSampleRequest,
   type EnrollmentStatus,
-  type SessionInfo,
 } from '@cerberus/shared-types';
-import { Router, type RequestHandler, type Response } from 'express';
+import { Router, type Request, type RequestHandler, type Response } from 'express';
 
 import { asyncHandler } from '../middleware/async-handler';
+import type { AuthenticatedSession } from '../middleware/authenticate';
 import { validateBody } from '../middleware/validate';
 import type { BehavioralService } from '../services/behavioral';
 
@@ -18,8 +18,13 @@ export interface EnrollmentRouterDeps {
   rateLimit: RequestHandler;
 }
 
-function session(res: Response): SessionInfo {
-  return res.locals.session as SessionInfo;
+function session(res: Response): AuthenticatedSession {
+  return res.locals.session as AuthenticatedSession;
+}
+
+/** Client IP for the contextual signals (honors trust-proxy; transient — truncated before storage). */
+function clientIp(req: Request): string | null {
+  return req.ip ?? null;
 }
 
 // Behavioral HTTP surface (ADR-0009 enrollment + ADR-0010 scoring). Thin: validate,
@@ -48,10 +53,20 @@ export function createEnrollmentRouter(deps: EnrollmentRouterDeps): Router {
   router.post(
     '/enrollment/samples',
     validateBody(EnrollmentSampleRequestSchema),
-    asyncHandler(async (_req, res) => {
+    asyncHandler(async (req, res) => {
       const body = res.locals.body as EnrollmentSampleRequest;
-      const { userId, deviceId } = session(res);
-      const result = await deps.behavioralService.submitSample(userId, deviceId, body);
+      const { userId, deviceId, createdAt, isNewDevice } = session(res);
+      const result = await deps.behavioralService.submitSample(
+        {
+          userId,
+          deviceId,
+          isNewDevice,
+          sessionCreatedAt: createdAt,
+          ip: clientIp(req),
+          now: new Date(),
+        },
+        body,
+      );
       if (!result.ok) {
         // schema_version → 409 (client must upgrade); dimension_mismatch → 400.
         res.status(result.reason === 'schema_version' ? 409 : 400).json({ error: result.reason });

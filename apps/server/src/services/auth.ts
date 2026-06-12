@@ -13,6 +13,7 @@ import type { Pool } from 'pg';
 
 import type { ServerConfig } from '../config';
 import { createDevicesRepository } from '../repositories/devices';
+import { createLoginFailuresRepository } from '../repositories/login-failures';
 import { withTransaction } from '../repositories/pool';
 import { createSessionsRepository } from '../repositories/sessions';
 import { createUsersRepository } from '../repositories/users';
@@ -25,7 +26,13 @@ import {
   verifyAgainstDummy,
   verifyAuthKey,
 } from './auth-crypto';
+import { truncateIp } from './geoip';
 import type { AccountLockout } from './rate-limiter';
+
+/** Per-request login context (client IP for failure-velocity history). */
+export interface LoginContext {
+  ip: string | null;
+}
 
 export interface AuthServiceDeps {
   pool: Pool;
@@ -120,7 +127,7 @@ export function createAuthService(deps: AuthServiceDeps) {
      * The unknown-user and wrong-password paths perform the same Argon2id verify
      * work (no early return) so they are timing-indistinguishable.
      */
-    async login(input: LoginRequest): Promise<LoginResult> {
+    async login(input: LoginRequest, context: LoginContext): Promise<LoginResult> {
       const user = await createUsersRepository(pool).findByUsername(input.username);
 
       let valid: boolean;
@@ -134,6 +141,12 @@ export function createAuthService(deps: AuthServiceDeps) {
 
       if (!user || !valid) {
         lockout.recordFailure(`acct:${input.username}`, Date.now());
+        // Record the failure for the failure-velocity signal (ADR-0011). Only a
+        // truncated IP + optional user_id — never the attempted password.
+        await createLoginFailuresRepository(pool).record({
+          userId: user?.id ?? null,
+          ipTruncated: context.ip === null ? null : truncateIp(context.ip),
+        });
         return { ok: false };
       }
 
@@ -159,6 +172,7 @@ export function createAuthService(deps: AuthServiceDeps) {
           deviceId: device.id,
           tokenHash: hashSessionToken(sessionToken),
           expiresAt,
+          isNewDevice: device.isNew,
         });
         return device.isNew;
       });

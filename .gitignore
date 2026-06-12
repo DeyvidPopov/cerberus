@@ -48,6 +48,13 @@ apps/desktop/src-tauri/target/
 docs/evaluation/data/
 
 # ---------------------------------------------------------------------------
+# Offline GeoIP database (ADR-0011). Fetched locally, never committed (licensing
+# + size). The geovelocity signal degrades to neutral when it is absent.
+# ---------------------------------------------------------------------------
+*.mmdb
+apps/server/data/
+
+# ---------------------------------------------------------------------------
 # Logs & misc
 # ---------------------------------------------------------------------------
 *.log

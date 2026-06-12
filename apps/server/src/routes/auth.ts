@@ -63,9 +63,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     '/auth/login',
     deps.loginLimit,
     validateBody(LoginRequestSchema),
-    asyncHandler(async (_req, res) => {
+    asyncHandler(async (req, res) => {
       const body = res.locals.body as LoginRequest;
-      const result = await deps.authService.login(body);
+      // Client IP (honors trust-proxy) for failure-velocity history; never the
+      // full IP is stored — the auth service truncates it (PROJECT.md §5).
+      const result = await deps.authService.login(body, { ip: req.ip ?? null });
       if (!result.ok) {
         res.status(401).json({ error: 'invalid_credentials' });
         return;
@@ -83,7 +85,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
 
   router.get('/auth/me', deps.authenticate, (_req, res) => {
     const session = res.locals.session as SessionInfo;
-    res.json(session);
+    // Return ONLY the public DTO fields (res.locals.session also carries createdAt).
+    res.json({ userId: session.userId, deviceId: session.deviceId });
   });
 
   return router;

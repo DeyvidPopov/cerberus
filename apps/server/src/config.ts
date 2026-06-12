@@ -1,6 +1,11 @@
 // Application configuration, read from the environment (PROJECT.md §7).
 // Read once at startup. Secrets are never logged (PROJECT.md §5).
-import { DEFAULT_BEHAVIORAL_CONFIG, type BehavioralConfig } from './risk/config';
+import {
+  DEFAULT_BEHAVIORAL_CONFIG,
+  DEFAULT_CONTEXTUAL_CONFIG,
+  type BehavioralConfig,
+  type ContextualConfig,
+} from './risk/config';
 
 export interface RateLimitConfig {
   /** Per-IP sliding window for login/prelogin. */
@@ -30,6 +35,18 @@ export interface ServerConfig {
   readonly baselineEncryptionKey: Buffer;
   /** Behavioral enrollment config (ADR-0009). */
   readonly behavioral: BehavioralConfig;
+  /** Contextual risk-signal config (ADR-0011). */
+  readonly contextual: ContextualConfig;
+  /**
+   * Path to a local MaxMind GeoLite2-City .mmdb for offline geo (ADR-0011). When
+   * unset/missing the geovelocity signal stays neutral. Never an external API.
+   */
+  readonly geoipDbPath: string | undefined;
+  /**
+   * Express `trust proxy` setting so the real client IP is read behind a reverse
+   * proxy (the M4 open item). A number of hops, a boolean, or a preset string.
+   */
+  readonly trustProxy: boolean | number | string;
 }
 
 const DEFAULT_PORT = 8080;
@@ -42,6 +59,18 @@ const DEV_BASELINE_KEY_HEX =
 function intFromEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? '', 10);
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+/** Parse the Express trust-proxy setting from env: number of hops | boolean | preset. */
+function trustProxyFromEnv(): boolean | number | string {
+  const raw = process.env.TRUST_PROXY;
+  if (raw === undefined || raw === '') {
+    return false; // by default read the socket address (no proxy assumed)
+  }
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  const hops = Number.parseInt(raw, 10);
+  return Number.isNaN(hops) ? raw : hops;
 }
 
 /** Decode a 32-byte key from hex (64 chars) or base64; throw if it is not 32 bytes. */
@@ -97,5 +126,17 @@ export function loadConfig(): ServerConfig {
         DEFAULT_BEHAVIORAL_CONFIG.minEnrollmentSamples,
       ),
     },
+    contextual: {
+      ...DEFAULT_CONTEXTUAL_CONFIG,
+      failureVelocity: {
+        ...DEFAULT_CONTEXTUAL_CONFIG.failureVelocity,
+        windowMinutes: intFromEnv(
+          'FAILURE_VELOCITY_WINDOW_MIN',
+          DEFAULT_CONTEXTUAL_CONFIG.failureVelocity.windowMinutes,
+        ),
+      },
+    },
+    geoipDbPath: process.env.GEOIP_DB_PATH,
+    trustProxy: trustProxyFromEnv(),
   };
 }

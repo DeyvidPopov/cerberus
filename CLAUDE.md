@@ -18,6 +18,7 @@ security invariants below take precedence over speed or convenience.
   - 0007 zero-knowledge login handshake · 0008 encrypted blob sync
   - 0009 behavioral feature schema, position-indexed capture & enrollment lifecycle
   - 0010 Mahalanobis→χ² scoring & offline detector comparison (Killourhy & Maxion)
+  - 0011 contextual risk signals (new-device, geovelocity, time-of-day, failure-velocity)
 - `docs/threat-model.md` — assets, adversaries, trust boundaries.
 
 ## Non-negotiable security invariants

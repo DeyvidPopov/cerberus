@@ -5,7 +5,7 @@
 import { randomBytes } from 'node:crypto';
 
 import type { ServerConfig } from '../config';
-import { DEFAULT_BEHAVIORAL_CONFIG } from '../risk/config';
+import { DEFAULT_BEHAVIORAL_CONFIG, DEFAULT_CONTEXTUAL_CONFIG } from '../risk/config';
 
 export function testServerConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return {
@@ -26,6 +26,10 @@ export function testServerConfig(overrides: Partial<ServerConfig> = {}): ServerC
     // A random per-run at-rest key; tests never depend on a fixed value.
     baselineEncryptionKey: randomBytes(32),
     behavioral: { ...DEFAULT_BEHAVIORAL_CONFIG },
+    contextual: { ...DEFAULT_CONTEXTUAL_CONFIG },
+    geoipDbPath: undefined,
+    // Trust proxy so tests can drive the client IP via X-Forwarded-For.
+    trustProxy: true,
     ...overrides,
   };
 }
