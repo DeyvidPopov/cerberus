@@ -1,10 +1,19 @@
+import { FEATURE_SCHEMA_VERSION, type EnrollmentStatus } from '@cerberus/shared-types';
 import { useState } from 'react';
 
+import { submitEnrollmentSample } from '../../lib/api';
 import { loginAccount, registerAccount } from '../../lib/auth';
+import { useKeystrokeCapture } from '../../lib/keystroke-capture';
 import { errorMessage } from '../../lib/tauri';
 
+/** What a completed auth hands up: the session token and (on login) enrollment progress. */
+export interface AuthenticatedSession {
+  token: string | null;
+  enrollment: EnrollmentStatus | null;
+}
+
 interface AuthScreenProps {
-  onAuthenticated: () => void;
+  onAuthenticated: (session: AuthenticatedSession) => void;
 }
 
 type Mode = 'login' | 'register';
@@ -14,6 +23,11 @@ type Mode = 'login' | 'register';
 // component state only until it is handed to the Rust derivation, then it is
 // cleared (PROJECT.md §4.2); it is never written to browser storage and never
 // sent to the server.
+//
+// Milestone 6: the password input's KEYSTROKE TIMING (positions only, never
+// characters — see lib/keystroke) is captured during login and, after a
+// SUCCESSFUL login, submitted to the enrollment endpoint as a position-indexed
+// feature vector. The password value itself still flows only to Rust.
 export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [mode, setMode] = useState<Mode>('login');
   const [username, setUsername] = useState('');
@@ -21,10 +35,38 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const capture = useKeystrokeCapture();
 
   const clearSecrets = (): void => {
     setPassword('');
     setConfirm('');
+  };
+
+  const doRegister = async (): Promise<void> => {
+    await registerAccount(username, password);
+    capture.reset(); // discard any captured timing; enrollment happens on login
+    clearSecrets();
+    onAuthenticated({ token: null, enrollment: null });
+  };
+
+  const doLogin = async (): Promise<void> => {
+    const session = await loginAccount(username, password);
+    // The capture is meaningful only after a successful login. Submitting the
+    // sample is best-effort — enrollment must NEVER block authentication.
+    const features = capture.takeSample();
+    let enrollment: EnrollmentStatus | null = null;
+    if (features !== null) {
+      try {
+        enrollment = await submitEnrollmentSample(session.sessionToken, {
+          featureSchemaVersion: FEATURE_SCHEMA_VERSION,
+          features,
+        });
+      } catch {
+        enrollment = null;
+      }
+    }
+    clearSecrets();
+    onAuthenticated({ token: session.sessionToken, enrollment });
   };
 
   const submit = (): void => {
@@ -34,16 +76,9 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       return;
     }
     setBusy(true);
-    const action =
-      mode === 'register'
-        ? registerAccount(username, password)
-        : loginAccount(username, password).then(() => undefined);
-    void action
-      .then(() => {
-        clearSecrets();
-        onAuthenticated();
-      })
+    void (mode === 'register' ? doRegister() : doLogin())
       .catch((e: unknown) => {
+        capture.reset(); // a fresh capture starts on the next attempt
         clearSecrets();
         setError(errorMessage(e));
       })
@@ -55,6 +90,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const toggleMode = (): void => {
     setMode((current) => (current === 'login' ? 'register' : 'login'));
     setError(null);
+    capture.reset();
     clearSecrets();
   };
 
@@ -79,6 +115,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           disabled={busy}
         />
         <input
+          ref={capture.inputRef}
           type="password"
           aria-label="Master password"
           placeholder="Master password"

@@ -1,7 +1,12 @@
+import type {
+  Credential,
+  CredentialInput,
+  CredentialSummary,
+  EnrollmentStatus,
+} from '@cerberus/shared-types';
 import { useEffect, useState } from 'react';
 
-import type { Credential, CredentialInput, CredentialSummary } from '@cerberus/shared-types';
-
+import type { AuthenticatedSession } from '../auth/AuthScreen';
 import {
   addCredential,
   deleteCredential,
@@ -22,12 +27,31 @@ const EMPTY_INPUT: CredentialInput = {
 
 interface VaultViewProps {
   onLock: () => void;
+  session: AuthenticatedSession;
+}
+
+// Behavioral enrollment progress (Milestone 6): a progress indicator while the
+// typing profile is being built, and a confirmation once it is active. The
+// status carries only counts — never a raw feature vector (PROJECT.md §5).
+function EnrollmentBanner({ enrollment }: { enrollment: EnrollmentStatus }) {
+  if (enrollment.status === 'active') {
+    return (
+      <p className="enrollment" role="status">
+        ✓ Typing profile active
+      </p>
+    );
+  }
+  return (
+    <p className="enrollment" role="status">
+      Building typing profile: {enrollment.samplesCollected}/{enrollment.samplesRequired}
+    </p>
+  );
 }
 
 // Credential plaintext (the password) is only pulled into the webview on demand
 // — when revealing or editing a single item — and is never persisted to browser
 // storage (PROJECT.md §4.2). The list shows only id/name/username.
-export function VaultView({ onLock }: VaultViewProps) {
+export function VaultView({ onLock, session }: VaultViewProps) {
   const [items, setItems] = useState<CredentialSummary[]>([]);
   const [form, setForm] = useState<CredentialInput>(EMPTY_INPUT);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -127,6 +151,8 @@ export function VaultView({ onLock }: VaultViewProps) {
           Lock
         </button>
       </header>
+
+      {session.enrollment !== null && <EnrollmentBanner enrollment={session.enrollment} />}
 
       {error !== null && (
         <p role="alert" className="error">

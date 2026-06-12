@@ -8,6 +8,10 @@
 // browser storage by the client.
 import { z } from 'zod';
 
+// Behavioral feature schema + enrollment DTOs (Milestone 6; ADR-0002, ADR-0009).
+// Re-exported here so the contract has a single import surface (@cerberus/shared-types).
+export * from './behavioral';
+
 /** Editable credential fields, sent to `add`/`update`. */
 export const CredentialInputSchema = z.object({
   name: z.string(),

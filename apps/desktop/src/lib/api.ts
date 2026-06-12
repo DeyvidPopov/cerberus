@@ -5,6 +5,7 @@
 // client sends only the auth key, public KDF params, and the opaque wrapped vault
 // key; the master password and encryption key never leave the Rust core.
 import {
+  EnrollmentStatusSchema,
   LoginResponseSchema,
   PreloginResponseSchema,
   RegisterResponseSchema,
@@ -13,6 +14,8 @@ import {
   VaultKeyResponseSchema,
   VaultMutationResponseSchema,
   type CreateVaultItemRequest,
+  type EnrollmentSampleRequest,
+  type EnrollmentStatus,
   type LoginRequest,
   type LoginResponse,
   type PreloginRequest,
@@ -127,4 +130,18 @@ export async function deleteVaultItem(token: string, id: string): Promise<void> 
   if (!response.ok) {
     throw new ApiError(response.status, `DELETE /vault/items/${id} failed`);
   }
+}
+
+// --- Behavioral enrollment (Milestone 6). The submitted body is a position-
+// indexed feature vector (durations only) — never the password or any character. ---
+
+export async function submitEnrollmentSample(
+  token: string,
+  body: EnrollmentSampleRequest,
+): Promise<EnrollmentStatus> {
+  return authed('POST', '/enrollment/samples', token, EnrollmentStatusSchema, body);
+}
+
+export async function getEnrollmentStatus(token: string): Promise<EnrollmentStatus> {
+  return authed('GET', '/enrollment/status', token, EnrollmentStatusSchema);
 }

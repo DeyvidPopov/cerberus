@@ -1,28 +1,24 @@
 import { useState } from 'react';
 
-import { AuthScreen } from './features/auth/AuthScreen';
+import { AuthScreen, type AuthenticatedSession } from './features/auth/AuthScreen';
 import { VaultView } from './features/vault/VaultView';
 
 // Top-level shell: show the auth screen (register/login) until authenticated,
 // then the vault view. No secret state lives here — keys stay in Rust
-// (PROJECT.md §1.2). Registration replaces M3's auto-init-on-first-unlock.
+// (PROJECT.md §1.2). The session carried here is the non-secret token + the
+// behavioral enrollment progress (Milestone 6), shown as a banner in the vault.
 export function App() {
-  const [authenticated, setAuthenticated] = useState(false);
+  const [session, setSession] = useState<AuthenticatedSession | null>(null);
 
-  if (!authenticated) {
-    return (
-      <AuthScreen
-        onAuthenticated={() => {
-          setAuthenticated(true);
-        }}
-      />
-    );
+  if (session === null) {
+    return <AuthScreen onAuthenticated={setSession} />;
   }
 
   return (
     <VaultView
+      session={session}
       onLock={() => {
-        setAuthenticated(false);
+        setSession(null);
       }}
     />
   );

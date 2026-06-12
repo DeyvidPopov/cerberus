@@ -10,4 +10,9 @@
 //     (grant / step-up / deny);
 //   - every decision is logged as a structured record (the evaluation dataset);
 //   - scoring is deterministic given the same inputs + seeded model state.
-export {};
+//
+// Milestone 6 lands the behavioral ENROLLMENT half (no scoring yet): the named
+// config, the baseline fit + covariance regularization, and the CMU loader.
+export * from './config';
+export * from './baseline-model';
+export * from './cmu-loader';

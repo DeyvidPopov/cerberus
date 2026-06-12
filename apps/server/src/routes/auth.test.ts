@@ -7,29 +7,9 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createApp } from '../app';
-import type { ServerConfig } from '../config';
+import { testServerConfig as testConfig } from '../test-support/config';
 import { deviceFingerprintHash, makeRegistration, uniqueUsername } from '../test-support/fixtures';
 import { createTestDb, type TestDb } from '../test-support/postgres';
-
-function testConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
-  return {
-    port: 0,
-    nodeEnv: 'test',
-    logLevel: 'error',
-    databaseUrl: 'unused-in-tests',
-    enumerationSecret: 'test-enumeration-secret',
-    sessionTtlMs: 60_000,
-    rateLimit: {
-      ipWindowMs: 60_000,
-      ipMaxRequests: 1000,
-      accountMaxFailures: 5,
-      accountLockoutMs: 60_000,
-      vaultWindowMs: 60_000,
-      vaultMaxRequests: 1000,
-    },
-    ...overrides,
-  };
-}
 
 let db: TestDb;
 let pool: Pool;

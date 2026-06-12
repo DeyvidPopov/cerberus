@@ -10,8 +10,10 @@ import { requestId } from './middleware/request-id';
 import { createSessionsRepository } from './repositories/sessions';
 import { routes } from './routes';
 import { createAuthRouter } from './routes/auth';
+import { createEnrollmentRouter } from './routes/enrollment';
 import { createVaultRouter } from './routes/vault';
 import { createAuthService } from './services/auth';
+import { createEnrollmentService } from './services/enrollment';
 import { AccountLockout, RateLimiter } from './services/rate-limiter';
 import { createVaultService } from './services/vault';
 
@@ -38,9 +40,18 @@ export function createApp(pool: Pool, config: ServerConfig): Express {
     config.rateLimit.vaultWindowMs,
     config.rateLimit.vaultMaxRequests,
   );
+  const enrollmentLimiter = new RateLimiter(
+    config.rateLimit.vaultWindowMs,
+    config.rateLimit.vaultMaxRequests,
+  );
 
   const authService = createAuthService({ pool, config, lockout });
   const vaultService = createVaultService({ pool });
+  const enrollmentService = createEnrollmentService({
+    pool,
+    baselineEncryptionKey: config.baselineEncryptionKey,
+    minEnrollmentSamples: config.behavioral.minEnrollmentSamples,
+  });
   const sessions = createSessionsRepository(pool);
   const authenticate = createAuthenticate(sessions);
 
@@ -58,6 +69,13 @@ export function createApp(pool: Pool, config: ServerConfig): Express {
       vaultService,
       authenticate,
       rateLimit: rateLimitByUser(vaultLimiter),
+    }),
+  );
+  app.use(
+    createEnrollmentRouter({
+      enrollmentService,
+      authenticate,
+      rateLimit: rateLimitByUser(enrollmentLimiter),
     }),
   );
 
