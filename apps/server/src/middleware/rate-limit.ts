@@ -36,6 +36,25 @@ export function rateLimitByIp(limiter: RateLimiter) {
   };
 }
 
+/**
+ * Per-user rate limit for authenticated routes (e.g. vault sync). Keys on the
+ * session user id set by the auth middleware (which runs first); falls back to IP
+ * if no session is present.
+ */
+export function rateLimitByUser(limiter: RateLimiter) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const session = res.locals.session as { userId?: unknown } | undefined;
+    const userId = session && typeof session.userId === 'string' ? session.userId : undefined;
+    const key = userId !== undefined ? `user:${userId}` : `ip:${clientIp(req)}`;
+    const result = limiter.check(key, Date.now());
+    if (!result.allowed) {
+      tooManyRequests(res, result.retryAfterMs);
+      return;
+    }
+    next();
+  };
+}
+
 /** Login guard: per-IP limit AND per-account lockout (PROJECT.md §4.3). */
 export function loginRateLimit(limiter: RateLimiter, lockout: AccountLockout) {
   return (req: Request, res: Response, next: NextFunction): void => {

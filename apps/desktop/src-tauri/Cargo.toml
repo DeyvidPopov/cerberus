@@ -24,7 +24,10 @@ workspace = true
 [features]
 default = []
 # Pulls in the Tauri runtime + build script and enables the `commands` FFI module.
-desktop = ["dep:tauri", "dep:tauri-build"]
+# `dep:time` hard-pins the transitive `time` crate to =0.3.47 (see [dependencies]):
+# time >=0.3.48 conflicts with tauri-utils 2.9.2 (E0119). Gated to `desktop` so the
+# hermetic core never pulls `time` (the conflict only exists in the Tauri subtree).
+desktop = ["dep:tauri", "dep:tauri-build", "dep:time"]
 
 [dependencies]
 # One error enum via thiserror (PROJECT.md §4.1).
@@ -52,6 +55,10 @@ uuid = { version = "1", features = ["v4"] }
 
 # --- Tauri runtime (optional; only with the `desktop` feature). ---
 tauri = { version = "2", optional = true }
+# Hard pin (permanent fix for the tauri-utils E0119): force the transitive `time`
+# to exactly 0.3.47. Not used by our code directly; enabled by `desktop` so the
+# resolver cannot drift `time` to >=0.3.48 even on `cargo update`. See ADR-0006.
+time = { version = "=0.3.47", optional = true }
 
 [build-dependencies]
 # Only compiled/run with the `desktop` feature (gated in build.rs).

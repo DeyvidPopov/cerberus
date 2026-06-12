@@ -8,6 +8,9 @@ export interface RateLimitConfig {
   /** Per-account lockout after this many consecutive failed logins. */
   readonly accountMaxFailures: number;
   readonly accountLockoutMs: number;
+  /** Per-user window for authenticated vault sync endpoints (PROJECT.md §4.3). */
+  readonly vaultWindowMs: number;
+  readonly vaultMaxRequests: number;
 }
 
 export interface ServerConfig {
@@ -52,6 +55,8 @@ export function loadConfig(): ServerConfig {
       ipMaxRequests: intFromEnv('RL_IP_MAX', 100),
       accountMaxFailures: intFromEnv('RL_ACCOUNT_MAX_FAILURES', 5),
       accountLockoutMs: intFromEnv('RL_ACCOUNT_LOCKOUT_MS', 15 * 60 * 1000),
+      vaultWindowMs: intFromEnv('RL_VAULT_WINDOW_MS', 15 * 60 * 1000),
+      vaultMaxRequests: intFromEnv('RL_VAULT_MAX', 600),
     },
   };
 }

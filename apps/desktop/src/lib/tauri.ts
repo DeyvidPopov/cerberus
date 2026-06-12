@@ -10,12 +10,15 @@ import {
   CredentialIdSchema,
   CredentialSchema,
   CredentialSummaryListSchema,
+  PlaintextResultSchema,
   RegistrationMaterialSchema,
+  SealedBlobSchema,
   type Credential,
   type CredentialInput,
   type CredentialSummary,
   type KdfParams,
   type RegistrationMaterial,
+  type SealedBlob,
 } from '@cerberus/shared-types';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -44,6 +47,52 @@ export async function deriveLoginAuthKey(
     kdf_params: kdfParams,
   });
   return Base64ResultSchema.parse(result);
+}
+
+export interface SealArgs {
+  masterPassword: string;
+  kdfSalt: string;
+  kdfParams: KdfParams;
+  wrappedVaultKey: string;
+  wrappedVaultKeyNonce: string;
+  plaintext: string;
+}
+
+/** Encrypt a credential to an opaque blob in Rust (for sync push). */
+export async function sealCredential(args: SealArgs): Promise<SealedBlob> {
+  const result: unknown = await invoke('seal_credential', {
+    master_password: args.masterPassword,
+    kdf_salt: args.kdfSalt,
+    kdf_params: args.kdfParams,
+    wrapped_vault_key: args.wrappedVaultKey,
+    wrapped_vault_key_nonce: args.wrappedVaultKeyNonce,
+    plaintext: args.plaintext,
+  });
+  return SealedBlobSchema.parse(result);
+}
+
+export interface OpenArgs {
+  masterPassword: string;
+  kdfSalt: string;
+  kdfParams: KdfParams;
+  wrappedVaultKey: string;
+  wrappedVaultKeyNonce: string;
+  ciphertext: string;
+  nonce: string;
+}
+
+/** Decrypt an opaque blob pulled from the server back to plaintext, in Rust. */
+export async function openCredential(args: OpenArgs): Promise<string> {
+  const result: unknown = await invoke('open_credential', {
+    master_password: args.masterPassword,
+    kdf_salt: args.kdfSalt,
+    kdf_params: args.kdfParams,
+    wrapped_vault_key: args.wrappedVaultKey,
+    wrapped_vault_key_nonce: args.wrappedVaultKeyNonce,
+    ciphertext: args.ciphertext,
+    nonce: args.nonce,
+  });
+  return PlaintextResultSchema.parse(result);
 }
 
 export async function unlock(masterPassword: string): Promise<void> {

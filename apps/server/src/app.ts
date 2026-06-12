@@ -5,13 +5,15 @@ import type { ServerConfig } from './config';
 import { createAuthenticate } from './middleware/authenticate';
 import { errorHandler } from './middleware/error-handler';
 import { notFound } from './middleware/not-found';
-import { loginRateLimit, rateLimitByIp } from './middleware/rate-limit';
+import { loginRateLimit, rateLimitByIp, rateLimitByUser } from './middleware/rate-limit';
 import { requestId } from './middleware/request-id';
 import { createSessionsRepository } from './repositories/sessions';
 import { routes } from './routes';
 import { createAuthRouter } from './routes/auth';
+import { createVaultRouter } from './routes/vault';
 import { createAuthService } from './services/auth';
 import { AccountLockout, RateLimiter } from './services/rate-limiter';
+import { createVaultService } from './services/vault';
 
 // Builds the Express app with the fixed middleware order (PROJECT.md §4.3):
 //   request-id → auth → rate-limit → validation → handler → not-found → error
@@ -32,8 +34,15 @@ export function createApp(pool: Pool, config: ServerConfig): Express {
     config.rateLimit.accountLockoutMs,
   );
 
+  const vaultLimiter = new RateLimiter(
+    config.rateLimit.vaultWindowMs,
+    config.rateLimit.vaultMaxRequests,
+  );
+
   const authService = createAuthService({ pool, config, lockout });
+  const vaultService = createVaultService({ pool });
   const sessions = createSessionsRepository(pool);
+  const authenticate = createAuthenticate(sessions);
 
   app.use(routes);
   app.use(
@@ -41,7 +50,14 @@ export function createApp(pool: Pool, config: ServerConfig): Express {
       authService,
       ipLimit: rateLimitByIp(ipLimiter),
       loginLimit: loginRateLimit(ipLimiter, lockout),
-      authenticate: createAuthenticate(sessions),
+      authenticate,
+    }),
+  );
+  app.use(
+    createVaultRouter({
+      vaultService,
+      authenticate,
+      rateLimit: rateLimitByUser(vaultLimiter),
     }),
   );
 

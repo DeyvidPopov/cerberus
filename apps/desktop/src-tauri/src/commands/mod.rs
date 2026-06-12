@@ -16,10 +16,11 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
-use crate::crypto::{KdfParams, SecretString};
+use crate::crypto::{AeadCiphertext, KdfParams, SecretString, NONCE_LEN};
 use crate::vault::{
-    build_registration, derive_login_auth_key, CredentialData, CredentialRecord, CredentialSummary,
-    VaultManager, VaultStore,
+    build_registration, decrypt_credential, derive_login_auth_key, encrypt_credential,
+    unwrap_login_vault_key, CredentialData, CredentialRecord, CredentialSummary, VaultManager,
+    VaultStore,
 };
 
 /// Managed Tauri state: the vault session behind a mutex.
@@ -94,6 +95,76 @@ pub fn derive_login_auth_key_cmd(
     let params: KdfParams = kdf_params.into();
     let auth_key = derive_login_auth_key(&secret, &salt, &params).map_err(|e| e.to_string())?;
     Ok(STANDARD.encode(auth_key.as_bytes()))
+}
+
+/// An AEAD blob crossing the IPC boundary (base64 nonce + ciphertext, ADR-0005).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobDto {
+    pub ciphertext: String,
+    pub nonce: String,
+}
+
+fn aead_from(ciphertext_b64: &str, nonce_b64: &str) -> Result<AeadCiphertext, String> {
+    let nonce_vec = STANDARD
+        .decode(nonce_b64)
+        .map_err(|_| "invalid nonce".to_owned())?;
+    let nonce: [u8; NONCE_LEN] = nonce_vec
+        .try_into()
+        .map_err(|_| "invalid nonce length".to_owned())?;
+    let ciphertext = STANDARD
+        .decode(ciphertext_b64)
+        .map_err(|_| "invalid ciphertext".to_owned())?;
+    Ok(AeadCiphertext { nonce, ciphertext })
+}
+
+/// Encrypt a credential to an opaque blob for sync (ADR-0005). Re-derives the
+/// vault key from the master password + wrapped vault key; nothing secret is
+/// returned (only the opaque ciphertext + nonce).
+#[tauri::command]
+pub fn seal_credential(
+    master_password: String,
+    kdf_salt: String,
+    kdf_params: KdfParamsDto,
+    wrapped_vault_key: String,
+    wrapped_vault_key_nonce: String,
+    plaintext: String,
+) -> Result<BlobDto, String> {
+    let salt = STANDARD
+        .decode(&kdf_salt)
+        .map_err(|_| "invalid salt".to_owned())?;
+    let wrapped = aead_from(&wrapped_vault_key, &wrapped_vault_key_nonce)?;
+    let secret = SecretString::new(master_password);
+    let vault_key = unwrap_login_vault_key(&secret, &salt, &kdf_params.into(), &wrapped)
+        .map_err(|e| e.to_string())?;
+    let blob = encrypt_credential(&vault_key, plaintext.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(BlobDto {
+        ciphertext: STANDARD.encode(&blob.ciphertext),
+        nonce: STANDARD.encode(blob.nonce),
+    })
+}
+
+/// Decrypt an opaque blob pulled from the server back to its plaintext.
+#[tauri::command]
+pub fn open_credential(
+    master_password: String,
+    kdf_salt: String,
+    kdf_params: KdfParamsDto,
+    wrapped_vault_key: String,
+    wrapped_vault_key_nonce: String,
+    ciphertext: String,
+    nonce: String,
+) -> Result<String, String> {
+    let salt = STANDARD
+        .decode(&kdf_salt)
+        .map_err(|_| "invalid salt".to_owned())?;
+    let wrapped = aead_from(&wrapped_vault_key, &wrapped_vault_key_nonce)?;
+    let secret = SecretString::new(master_password);
+    let vault_key = unwrap_login_vault_key(&secret, &salt, &kdf_params.into(), &wrapped)
+        .map_err(|e| e.to_string())?;
+    let blob = aead_from(&ciphertext, &nonce)?;
+    let plaintext = decrypt_credential(&vault_key, &blob).map_err(|e| e.to_string())?;
+    String::from_utf8(plaintext.expose().to_vec()).map_err(|_| "invalid utf-8".to_owned())
 }
 
 /// Lock the shared manager, mapping mutex poisoning to a generic error.
@@ -176,6 +247,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             prepare_registration,
             derive_login_auth_key_cmd,
+            seal_credential,
+            open_credential,
             unlock,
             lock,
             add_credential,

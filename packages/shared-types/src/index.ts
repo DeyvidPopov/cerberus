@@ -146,3 +146,75 @@ export const SessionInfoSchema = z.object({
   deviceId: z.string().nullable(),
 });
 export type SessionInfo = z.infer<typeof SessionInfoSchema>;
+
+// ---------------------------------------------------------------------------
+// Encrypted blob sync (Milestone 5). ADR-0005 (wire format), ADR-0008 (sync).
+//
+// Every vault item is an OPAQUE AEAD blob (ADR-0005): the server stores and
+// returns only ciphertext + non-secret metadata and never decrypts anything.
+// `revision` drives optimistic concurrency (ADR-0008).
+// ---------------------------------------------------------------------------
+
+/** A UUID (exported for validating `:id` path params). */
+export const UuidSchema = z.string().uuid();
+const Uuid = UuidSchema;
+/** A base64 byte string sized for credential ciphertext (larger than keys/nonces). */
+const Base64Blob = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/u, 'must be base64').max(65536);
+
+/** GET /vault/key — the wrapped vault key for fresh-client bootstrap. */
+export const VaultKeyResponseSchema = z.object({
+  wrappedVaultKey: Base64,
+  wrappedVaultKeyNonce: Base64,
+});
+export type VaultKeyResponse = z.infer<typeof VaultKeyResponseSchema>;
+
+/** A stored vault item (opaque blob + non-secret metadata). */
+export const VaultItemSchema = z.object({
+  id: Uuid,
+  ciphertext: Base64Blob,
+  nonce: Base64,
+  itemType: z.string(),
+  revision: z.number().int().positive(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type VaultItem = z.infer<typeof VaultItemSchema>;
+
+/** GET /vault/items — the user's blobs (each with its metadata). */
+export const VaultItemListSchema = z.array(VaultItemSchema);
+
+/** POST /vault/items — store a new opaque blob (client supplies the id). */
+export const CreateVaultItemRequestSchema = z.object({
+  id: Uuid,
+  ciphertext: Base64Blob,
+  nonce: Base64,
+  itemType: z.string().min(1).max(64).default('login'),
+});
+export type CreateVaultItemRequest = z.infer<typeof CreateVaultItemRequestSchema>;
+
+/** PUT /vault/items/:id — replace a blob; `revision` is the base the edit was made on. */
+export const UpdateVaultItemRequestSchema = z.object({
+  ciphertext: Base64Blob,
+  nonce: Base64,
+  itemType: z.string().min(1).max(64).default('login'),
+  revision: z.number().int().positive(),
+});
+export type UpdateVaultItemRequest = z.infer<typeof UpdateVaultItemRequestSchema>;
+
+/** Result of a create/update: the id and the NEW revision. */
+export const VaultMutationResponseSchema = z.object({
+  id: Uuid,
+  revision: z.number().int().positive(),
+  updatedAt: z.string(),
+});
+export type VaultMutationResponse = z.infer<typeof VaultMutationResponseSchema>;
+
+/** IPC result of `seal_credential` (an opaque AEAD blob). */
+export const SealedBlobSchema = z.object({
+  ciphertext: Base64Blob,
+  nonce: Base64,
+});
+export type SealedBlob = z.infer<typeof SealedBlobSchema>;
+
+/** IPC result of `open_credential` (the decrypted plaintext). */
+export const PlaintextResultSchema = z.string();

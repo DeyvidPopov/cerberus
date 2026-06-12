@@ -11,6 +11,8 @@ import {
   errorMessage,
   getCredential,
   listCredentials,
+  openCredential,
+  sealCredential,
   unlock,
 } from './tauri';
 
@@ -69,6 +71,42 @@ describe('tauri client wrapper', () => {
     mockInvoke.mockResolvedValue(undefined);
     await deleteCredential('1');
     expect(mockInvoke).toHaveBeenCalledWith('delete_credential', { id: '1' });
+  });
+
+  it('sealCredential maps args to snake_case and validates the blob', async () => {
+    mockInvoke.mockResolvedValue({ ciphertext: 'QQ==', nonce: 'QQ==' });
+    const args = {
+      masterPassword: 'mp',
+      kdfSalt: 'salt',
+      kdfParams: { memoryKib: 1, iterations: 1, parallelism: 1 },
+      wrappedVaultKey: 'wk',
+      wrappedVaultKeyNonce: 'wn',
+      plaintext: '{"x":1}',
+    };
+    await expect(sealCredential(args)).resolves.toEqual({ ciphertext: 'QQ==', nonce: 'QQ==' });
+    expect(mockInvoke).toHaveBeenCalledWith('seal_credential', {
+      master_password: 'mp',
+      kdf_salt: 'salt',
+      kdf_params: { memoryKib: 1, iterations: 1, parallelism: 1 },
+      wrapped_vault_key: 'wk',
+      wrapped_vault_key_nonce: 'wn',
+      plaintext: '{"x":1}',
+    });
+  });
+
+  it('openCredential returns the validated plaintext', async () => {
+    mockInvoke.mockResolvedValue('{"x":1}');
+    await expect(
+      openCredential({
+        masterPassword: 'mp',
+        kdfSalt: 'salt',
+        kdfParams: { memoryKib: 1, iterations: 1, parallelism: 1 },
+        wrappedVaultKey: 'wk',
+        wrappedVaultKeyNonce: 'wn',
+        ciphertext: 'ct',
+        nonce: 'nc',
+      }),
+    ).resolves.toBe('{"x":1}');
   });
 });
 

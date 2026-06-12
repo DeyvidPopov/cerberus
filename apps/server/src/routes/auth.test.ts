@@ -24,6 +24,8 @@ function testConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
       ipMaxRequests: 1000,
       accountMaxFailures: 5,
       accountLockoutMs: 60_000,
+      vaultWindowMs: 60_000,
+      vaultMaxRequests: 1000,
     },
     ...overrides,
   };
@@ -219,7 +221,14 @@ describe('rate limiting and lockout (PROJECT.md §4.3)', () => {
     const limited = createApp(
       pool,
       testConfig({
-        rateLimit: { ipWindowMs: 60_000, ipMaxRequests: 3, accountMaxFailures: 100, accountLockoutMs: 60_000 },
+        rateLimit: {
+          ipWindowMs: 60_000,
+          ipMaxRequests: 3,
+          accountMaxFailures: 100,
+          accountLockoutMs: 60_000,
+          vaultWindowMs: 60_000,
+          vaultMaxRequests: 1000,
+        },
       }),
     );
     const send = () =>
@@ -234,7 +243,14 @@ describe('rate limiting and lockout (PROJECT.md §4.3)', () => {
     const locking = createApp(
       pool,
       testConfig({
-        rateLimit: { ipWindowMs: 60_000, ipMaxRequests: 1000, accountMaxFailures: 3, accountLockoutMs: 60_000 },
+        rateLimit: {
+          ipWindowMs: 60_000,
+          ipMaxRequests: 1000,
+          accountMaxFailures: 3,
+          accountLockoutMs: 60_000,
+          vaultWindowMs: 60_000,
+          vaultMaxRequests: 1000,
+        },
       }),
     );
     const username = uniqueUsername();

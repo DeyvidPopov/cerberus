@@ -44,23 +44,24 @@ no business logic (§4.1), and (d) persisting credentials encrypted with the ADR
    available in the current dev environment compiles the Tauri 2.11 dependency tree, so pinning a
    version here would pin a broken one. The hermetic core builds on any recent stable.
 
-## Known issue — Tauri dependency tree does not compile locally
+## Known issue — Tauri dependency tree (RESOLVED)
 
-In the development environment, `cargo build --features desktop` fails to compile the
-third-party `tauri-utils 2.9.2` and `cookie 0.18.1` crates with `error[E0119]` (conflicting
-`From<…HourBase>` impl) coming from `time 0.3.48`. This is independent of Cerberus code (the
-app's own modules never reach compilation). The constraints that make it unresolvable by version
-pinning here:
+**Status: resolved (Milestone 5 hotfix).** `cargo build --features desktop` previously failed
+compiling `tauri-utils 2.9.2` / `cookie 0.18.1` with `error[E0119]` (conflicting `From<…HourBase>`
+impl) introduced by `time 0.3.48`. Root cause: `time ≥ 0.3.48` adds impls that conflict with
+tauri-utils' blanket `From` impls.
 
-- `time 0.3.48`, `serde_with 3.21`, and `plist 1.9` all require **rustc ≥ 1.88**.
-- Every available toolchain ≥ 1.88 (1.88, 1.89, 1.90, 1.96) hits the `time`/`tauri-utils`
-  coherence error; toolchains < 1.88 fail the deps' MSRV (and < 1.85 lack edition2024).
-- `time` cannot be downgraded below the offending 0.3.42 because `plist 1.9` (required by
-  `tauri-utils`) needs `time ≥ 0.3.47`.
+**Fix:** pin `time` to exactly **0.3.47** — the floor `plist 1.9` allows (`time ≥ 0.3.47`) and the
+last version before the conflicting impls. This is enforced two ways:
 
-The crypto/vault core, persistence, command logic, IPC validators, UI, and the frontend dist all
-build and pass their tests. The remaining step — linking the Tauri runtime binary — must be
-verified on CI infrastructure whose `stable` Rust compiles this dependency tree.
+- A committed `Cargo.lock` resolving `time = 0.3.47` (reproducibility, PROJECT.md §6).
+- A hard constraint `time = { version = "=0.3.47", optional = true }` gated behind the `desktop`
+  feature, so the resolver cannot drift `time` to ≥ 0.3.48 (even on `cargo update`) and the
+  hermetic core never pulls `time` at all.
+
+With this, the Tauri app compiles and links (verified locally on Windows/WebView2; the E0119 is a
+platform-independent compile error in `tauri-utils`/`cookie`, so the fix applies equally to the CI
+ubuntu runner). No third-party crate was patched or vendored.
 
 ## Consequences
 

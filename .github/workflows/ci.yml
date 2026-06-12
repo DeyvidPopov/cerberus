@@ -109,6 +109,9 @@ jobs:
           --health-retries 5
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      # The headline E2E (sync.e2e.test.ts) drives the real Rust crypto via this
+      # hermetic CLI oracle built below.
+      CERBERUS_CLI_BIN: target/debug/cerberus-cli
     steps:
       - uses: actions/checkout@v4
 
@@ -118,8 +121,18 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The E2E test needs the hermetic crypto CLI (no Tauri / no system deps).
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Build crypto CLI (for the E2E)
+        run: cargo build --bin cerberus-cli
 
       # PROJECT.md §6 — tsc --noEmit across all TS packages.
       - name: Typecheck
@@ -129,6 +142,7 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # PROJECT.md §6 — TS unit + integration tests (repositories hit real Postgres).
+      # PROJECT.md §6 — TS unit + integration tests + the headline E2E
+      # (repositories hit real Postgres; the E2E also drives the Rust crypto CLI).
       - name: Test
         run: npm test

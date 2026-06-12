@@ -142,6 +142,10 @@ Postgres service container):
 TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5433/postgres npm test
 ```
 
+The headline end-to-end test (`apps/server/src/sync.e2e.test.ts`) drives the real
+Rust crypto through a hermetic `cerberus-cli` oracle — it auto-builds the CLI
+(`cargo build --bin cerberus-cli`) on first run, or honours `CERBERUS_CLI_BIN`.
+
 A red pipeline blocks merge (PROJECT.md §6).
 
 ---
