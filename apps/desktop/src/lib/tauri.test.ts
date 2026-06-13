@@ -8,25 +8,57 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   addCredential,
   deleteCredential,
+  deriveLoginAuthKey,
   errorMessage,
   getCredential,
   listCredentials,
   openCredential,
+  prepareRegistration,
   sealCredential,
   unlock,
 } from './tauri';
 
 const mockInvoke = vi.mocked(invoke);
 
+const kdfParams = { memoryKib: 1, iterations: 1, parallelism: 1 };
+
 beforeEach(() => {
   mockInvoke.mockReset();
 });
 
-describe('tauri client wrapper', () => {
-  it('forwards the master password under the snake_case key', async () => {
+// Tauri v2 maps camelCase invoke keys to the Rust commands' snake_case params, so
+// EVERY argument must be sent camelCase. These assertions pin the exact wire keys —
+// the IPC contract regression that broke registration (snake_case keys → Tauri
+// "missing required key masterPassword") would fail here.
+describe('tauri client wrapper — IPC argument casing', () => {
+  it('forwards the master password under the camelCase key', async () => {
     mockInvoke.mockResolvedValue(undefined);
     await unlock('hunter2');
-    expect(mockInvoke).toHaveBeenCalledWith('unlock', { master_password: 'hunter2' });
+    expect(mockInvoke).toHaveBeenCalledWith('unlock', { masterPassword: 'hunter2' });
+  });
+
+  it('prepareRegistration sends masterPassword (camelCase) and validates the reply', async () => {
+    const material = {
+      authKey: 'AK',
+      kdfVersion: 1,
+      kdfParams,
+      kdfSalt: 'SALT',
+      wrappedVaultKey: 'WK',
+      wrappedVaultKeyNonce: 'WN',
+    };
+    mockInvoke.mockResolvedValue(material);
+    await expect(prepareRegistration('master-pw')).resolves.toEqual(material);
+    expect(mockInvoke).toHaveBeenCalledWith('prepare_registration', { masterPassword: 'master-pw' });
+  });
+
+  it('deriveLoginAuthKey sends camelCase masterPassword/kdfSalt/kdfParams', async () => {
+    mockInvoke.mockResolvedValue('AUTHKEY');
+    await expect(deriveLoginAuthKey('master-pw', 'SALT', kdfParams)).resolves.toBe('AUTHKEY');
+    expect(mockInvoke).toHaveBeenCalledWith('derive_login_auth_key_cmd', {
+      masterPassword: 'master-pw',
+      kdfSalt: 'SALT',
+      kdfParams,
+    });
   });
 
   it('listCredentials validates and returns the summaries', async () => {
@@ -73,40 +105,49 @@ describe('tauri client wrapper', () => {
     expect(mockInvoke).toHaveBeenCalledWith('delete_credential', { id: '1' });
   });
 
-  it('sealCredential maps args to snake_case and validates the blob', async () => {
+  it('sealCredential maps args to camelCase and validates the blob', async () => {
     mockInvoke.mockResolvedValue({ ciphertext: 'QQ==', nonce: 'QQ==' });
     const args = {
       masterPassword: 'mp',
       kdfSalt: 'salt',
-      kdfParams: { memoryKib: 1, iterations: 1, parallelism: 1 },
+      kdfParams,
       wrappedVaultKey: 'wk',
       wrappedVaultKeyNonce: 'wn',
       plaintext: '{"x":1}',
     };
     await expect(sealCredential(args)).resolves.toEqual({ ciphertext: 'QQ==', nonce: 'QQ==' });
     expect(mockInvoke).toHaveBeenCalledWith('seal_credential', {
-      master_password: 'mp',
-      kdf_salt: 'salt',
-      kdf_params: { memoryKib: 1, iterations: 1, parallelism: 1 },
-      wrapped_vault_key: 'wk',
-      wrapped_vault_key_nonce: 'wn',
+      masterPassword: 'mp',
+      kdfSalt: 'salt',
+      kdfParams,
+      wrappedVaultKey: 'wk',
+      wrappedVaultKeyNonce: 'wn',
       plaintext: '{"x":1}',
     });
   });
 
-  it('openCredential returns the validated plaintext', async () => {
+  it('openCredential maps args to camelCase and returns the validated plaintext', async () => {
     mockInvoke.mockResolvedValue('{"x":1}');
     await expect(
       openCredential({
         masterPassword: 'mp',
         kdfSalt: 'salt',
-        kdfParams: { memoryKib: 1, iterations: 1, parallelism: 1 },
+        kdfParams,
         wrappedVaultKey: 'wk',
         wrappedVaultKeyNonce: 'wn',
         ciphertext: 'ct',
         nonce: 'nc',
       }),
     ).resolves.toBe('{"x":1}');
+    expect(mockInvoke).toHaveBeenCalledWith('open_credential', {
+      masterPassword: 'mp',
+      kdfSalt: 'salt',
+      kdfParams,
+      wrappedVaultKey: 'wk',
+      wrappedVaultKeyNonce: 'wn',
+      ciphertext: 'ct',
+      nonce: 'nc',
+    });
   });
 });
 

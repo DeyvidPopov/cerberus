@@ -22,7 +22,12 @@ import {
 } from '@cerberus/shared-types';
 import { invoke } from '@tauri-apps/api/core';
 
-// Command-argument keys use snake_case to match the Rust parameter names exactly.
+// Command-argument keys are camelCase. Tauri v2 deserializes invoke args with
+// camelCase keys and maps them to the Rust commands' snake_case parameters
+// (e.g. `masterPassword` → `master_password`); sending snake_case keys instead
+// makes Tauri report a "missing required key" for the camelCase name. The Rust
+// reply DTOs use `#[serde(rename_all = "camelCase")]`, so the validated reply
+// shapes already match the shared zod schemas.
 
 /**
  * Derive registration material in Rust (auth key, KDF params, wrapped vault key).
@@ -30,7 +35,7 @@ import { invoke } from '@tauri-apps/api/core';
  */
 export async function prepareRegistration(masterPassword: string): Promise<RegistrationMaterial> {
   const result: unknown = await invoke('prepare_registration', {
-    master_password: masterPassword,
+    masterPassword,
   });
   return RegistrationMaterialSchema.parse(result);
 }
@@ -42,9 +47,9 @@ export async function deriveLoginAuthKey(
   kdfParams: KdfParams,
 ): Promise<string> {
   const result: unknown = await invoke('derive_login_auth_key_cmd', {
-    master_password: masterPassword,
-    kdf_salt: kdfSalt,
-    kdf_params: kdfParams,
+    masterPassword,
+    kdfSalt,
+    kdfParams,
   });
   return Base64ResultSchema.parse(result);
 }
@@ -61,11 +66,11 @@ export interface SealArgs {
 /** Encrypt a credential to an opaque blob in Rust (for sync push). */
 export async function sealCredential(args: SealArgs): Promise<SealedBlob> {
   const result: unknown = await invoke('seal_credential', {
-    master_password: args.masterPassword,
-    kdf_salt: args.kdfSalt,
-    kdf_params: args.kdfParams,
-    wrapped_vault_key: args.wrappedVaultKey,
-    wrapped_vault_key_nonce: args.wrappedVaultKeyNonce,
+    masterPassword: args.masterPassword,
+    kdfSalt: args.kdfSalt,
+    kdfParams: args.kdfParams,
+    wrappedVaultKey: args.wrappedVaultKey,
+    wrappedVaultKeyNonce: args.wrappedVaultKeyNonce,
     plaintext: args.plaintext,
   });
   return SealedBlobSchema.parse(result);
@@ -84,11 +89,11 @@ export interface OpenArgs {
 /** Decrypt an opaque blob pulled from the server back to plaintext, in Rust. */
 export async function openCredential(args: OpenArgs): Promise<string> {
   const result: unknown = await invoke('open_credential', {
-    master_password: args.masterPassword,
-    kdf_salt: args.kdfSalt,
-    kdf_params: args.kdfParams,
-    wrapped_vault_key: args.wrappedVaultKey,
-    wrapped_vault_key_nonce: args.wrappedVaultKeyNonce,
+    masterPassword: args.masterPassword,
+    kdfSalt: args.kdfSalt,
+    kdfParams: args.kdfParams,
+    wrappedVaultKey: args.wrappedVaultKey,
+    wrappedVaultKeyNonce: args.wrappedVaultKeyNonce,
     ciphertext: args.ciphertext,
     nonce: args.nonce,
   });
@@ -96,7 +101,7 @@ export async function openCredential(args: OpenArgs): Promise<string> {
 }
 
 export async function unlock(masterPassword: string): Promise<void> {
-  await invoke('unlock', { master_password: masterPassword });
+  await invoke('unlock', { masterPassword });
 }
 
 export async function lock(): Promise<void> {
