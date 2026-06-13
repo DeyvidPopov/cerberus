@@ -14,7 +14,10 @@ describe('classifyAuthError', () => {
     expect(classifyAuthError(new ApiError(401, 'x'))).toBe('invalid_credentials');
     expect(classifyAuthError(new ApiError(403, 'x'))).toBe('access_denied');
     expect(classifyAuthError(new ApiError(429, 'x'))).toBe('rate_limited');
-    expect(classifyAuthError(new ApiError(500, 'x'))).toBe('unknown');
+    // A server fault (5xx) is its OWN kind — distinct from an unexpected client error.
+    expect(classifyAuthError(new ApiError(500, 'x'))).toBe('server_error');
+    expect(classifyAuthError(new ApiError(503, 'x'))).toBe('server_error');
+    expect(classifyAuthError(new ApiError(418, 'x'))).toBe('unknown'); // odd 4xx → unknown
   });
 
   it('maps a transport failure (fetch TypeError) to network', () => {
@@ -33,6 +36,7 @@ describe('loginErrorMessage — each outcome renders a distinct message', () => 
       'invalid_credentials',
       'access_denied',
       'rate_limited',
+      'server_error',
       'network',
       'unknown',
     ];
@@ -40,6 +44,7 @@ describe('loginErrorMessage — each outcome renders a distinct message', () => 
       invalid_credentials: new ApiError(401, 'x'),
       access_denied: new ApiError(403, 'x'),
       rate_limited: new ApiError(429, 'x'),
+      server_error: new ApiError(500, 'x'),
       network: new TypeError('Failed to fetch'),
       unknown: new Error('x'),
     };
@@ -47,10 +52,15 @@ describe('loginErrorMessage — each outcome renders a distinct message', () => 
     expect(new Set(messages).size).toBe(kinds.length); // all distinct
   });
 
-  it('uses the specified copy for 401 / 403 / network', () => {
+  it('uses the specified copy for 401 / 403 / 5xx / network', () => {
     expect(loginErrorMessage(new ApiError(401, 'x'))).toBe('Incorrect username or master password');
     expect(loginErrorMessage(new ApiError(403, 'x'))).toBe('Access denied due to risk');
     expect(loginErrorMessage(new TypeError('Failed to fetch'))).toBe("Couldn't reach the server");
+    // The exact symptom that was reported: a server 500 now reads as a server fault,
+    // not the indistinguishable "Something went wrong" client fallback.
+    const five = loginErrorMessage(new ApiError(500, 'internal_error'));
+    expect(five).toMatch(/server ran into a problem/i);
+    expect(five).not.toBe('Something went wrong. Please try again.');
   });
 
   it('PRIVACY: a deny message leaks no risk detail', () => {
@@ -73,7 +83,7 @@ describe('registerErrorMessage — distinct, non-leaking registration outcomes',
     expect(registerErrorMessage(new ApiError(400, 'x'))).toMatch(/check your username/i);
     expect(registerErrorMessage(new ApiError(429, 'x'))).toMatch(/too many attempts/i);
     expect(registerErrorMessage(new TypeError('Failed to fetch'))).toBe("Couldn't reach the server");
-    expect(registerErrorMessage(new ApiError(500, 'x'))).toMatch(/something went wrong/i);
+    expect(registerErrorMessage(new ApiError(500, 'x'))).toMatch(/server ran into a problem/i);
     expect(registerErrorMessage('rust derivation failed')).toMatch(/something went wrong/i);
   });
 

@@ -292,3 +292,86 @@ pub fn run() {
         std::process::exit(1);
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    // Cheap KDF params keep these tests fast: the command derives with whatever
+    // params it is GIVEN (the pinned ~0.5 s production cost is not exercised here).
+    fn cheap_params() -> KdfParamsDto {
+        KdfParamsDto {
+            memory_kib: 16,
+            iterations: 1,
+            parallelism: 1,
+        }
+    }
+
+    // Regression guard for the async + spawn_blocking conversion (commit 60e7048):
+    // the SUCCESS path — derive returns the auth key, not an error or wrong shape —
+    // and that key equals what the crypto core derives directly (no corruption from
+    // running off the main thread). Mirrors the M9 login: register and a later login
+    // derive the SAME auth key from the same password + salt + params.
+    #[test]
+    fn derive_login_auth_key_cmd_returns_the_crypto_core_key() {
+        let pw = "correct horse battery staple".to_owned();
+        let salt = [9u8; 16];
+        let salt_b64 = STANDARD.encode(salt);
+        let params = cheap_params();
+
+        let got = tauri::async_runtime::block_on(derive_login_auth_key_cmd(
+            pw.clone(),
+            salt_b64,
+            params.clone(),
+        ))
+        .expect("derive command must return the auth key, not an error");
+
+        let expected_key =
+            derive_login_auth_key(&SecretString::new(pw), &salt, &KdfParams::from(params))
+                .expect("crypto-core derive");
+        assert_eq!(got, STANDARD.encode(expected_key.as_bytes()));
+        assert!(!got.is_empty());
+    }
+
+    // The same password + salt + params must derive the SAME key every time, so a
+    // login can match the auth-key hash stored at registration.
+    #[test]
+    fn derive_login_auth_key_cmd_is_deterministic() {
+        let salt_b64 = STANDARD.encode([3u8; 16]);
+        let a = tauri::async_runtime::block_on(derive_login_auth_key_cmd(
+            "pw".to_owned(),
+            salt_b64.clone(),
+            cheap_params(),
+        ))
+        .unwrap();
+        let b = tauri::async_runtime::block_on(derive_login_auth_key_cmd(
+            "pw".to_owned(),
+            salt_b64,
+            cheap_params(),
+        ))
+        .unwrap();
+        assert_eq!(a, b);
+    }
+
+    // prepare_registration's success path returns usable, base64 material off-thread.
+    #[test]
+    fn prepare_registration_returns_material() {
+        let material =
+            tauri::async_runtime::block_on(prepare_registration("hunter2".to_owned())).unwrap();
+        assert!(STANDARD.decode(&material.auth_key).is_ok());
+        assert!(STANDARD.decode(&material.wrapped_vault_key).is_ok());
+        assert_eq!(material.kdf_version, 1); // pinned Argon2id V1 (ADR-0001)
+    }
+
+    // A malformed salt is a clean Err (fail closed), never a panic crossing the FFI.
+    #[test]
+    fn derive_login_auth_key_cmd_rejects_a_bad_salt() {
+        let r = tauri::async_runtime::block_on(derive_login_auth_key_cmd(
+            "pw".to_owned(),
+            "!!not-base64!!".to_owned(),
+            cheap_params(),
+        ));
+        assert!(r.is_err());
+    }
+}

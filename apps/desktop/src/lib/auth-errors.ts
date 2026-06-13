@@ -15,26 +15,33 @@ export type AuthErrorKind =
   | 'invalid_credentials' // 401 — wrong username / master password (or wrong/expired step-up code)
   | 'access_denied' // 403 — risk policy denied the attempt (no detail, ever)
   | 'rate_limited' // 429 — absolute backstop tripped
+  | 'server_error' // 5xx — the server faulted (NOT an auth outcome; e.g. a DB/migration error)
   | 'network' // no HTTP response: server unreachable or a CSP block
   | 'unknown'; // anything else (e.g. an IPC/derivation error)
 
 /**
  * Classify a thrown auth error into one distinct kind. An {@link ApiError} carries
  * the HTTP status; a transport failure (fetch rejects with a TypeError on a
- * network error or a CSP block) has no status and maps to `network`.
+ * network error or a CSP block) has no status and maps to `network`. A 5xx is a
+ * server fault (`server_error`) — distinct from a truly unexpected `unknown`, so a
+ * backend problem (e.g. a 500 from an un-applied migration) reads as such rather
+ * than as a vague client-side failure.
  */
 export function classifyAuthError(error: unknown): AuthErrorKind {
   if (error instanceof ApiError) {
-    switch (error.status) {
-      case 401:
-        return 'invalid_credentials';
-      case 403:
-        return 'access_denied';
-      case 429:
-        return 'rate_limited';
-      default:
-        return 'unknown';
+    if (error.status === 401) {
+      return 'invalid_credentials';
     }
+    if (error.status === 403) {
+      return 'access_denied';
+    }
+    if (error.status === 429) {
+      return 'rate_limited';
+    }
+    if (error.status >= 500) {
+      return 'server_error';
+    }
+    return 'unknown';
   }
   // fetch() rejects with a TypeError when the request never reached a server
   // (offline, DNS failure, or a Content-Security-Policy connect-src block).
@@ -44,11 +51,15 @@ export function classifyAuthError(error: unknown): AuthErrorKind {
   return 'unknown';
 }
 
+/** Generic, non-leaking copy for a server fault (5xx). Same across login/step-up/register. */
+const SERVER_ERROR_MESSAGE = 'The server ran into a problem. Please try again in a moment.';
+
 /** Messages for a failed LOGIN attempt. Static strings — no risk detail leaks. */
 const LOGIN_MESSAGES: Record<AuthErrorKind, string> = {
   invalid_credentials: 'Incorrect username or master password',
   access_denied: 'Access denied due to risk',
   rate_limited: 'Too many attempts. Please wait and try again.',
+  server_error: SERVER_ERROR_MESSAGE,
   network: "Couldn't reach the server",
   unknown: 'Something went wrong. Please try again.',
 };
@@ -58,6 +69,7 @@ const STEP_UP_MESSAGES: Record<AuthErrorKind, string> = {
   invalid_credentials: 'Incorrect or expired code. Try again.',
   access_denied: 'Access denied due to risk',
   rate_limited: 'Too many attempts. Please wait and try again.',
+  server_error: SERVER_ERROR_MESSAGE,
   network: "Couldn't reach the server",
   unknown: 'Something went wrong. Please try again.',
 };
@@ -86,7 +98,9 @@ export function registerErrorMessage(error: unknown): string {
       case 429:
         return 'Too many attempts. Please wait and try again.';
       default:
-        return 'Something went wrong creating your vault. Please try again.';
+        return error.status >= 500
+          ? SERVER_ERROR_MESSAGE
+          : 'Something went wrong creating your vault. Please try again.';
     }
   }
   if (error instanceof TypeError) {
