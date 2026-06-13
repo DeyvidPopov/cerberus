@@ -64,10 +64,7 @@ security invariants below take precedence over speed or convenience.
 
 ## Process
 
-- Conventional Commits; short-lived branches; commit a `Cargo.lock`.
+- Conventional Commits; short-lived branches; commit a `Cargo.lock`. The full per-milestone git
+  loop (branch from main → commit → ff-only merge → push → confirm CI green) is in `GIT_WORKFLOW.md`.
 - Any decision with lasting consequences gets an ADR in `docs/adr/` (these double as thesis material).
 - If a rule here blocks a task, STOP and report it — do not weaken a rule to make a build or test pass.
-
-```
-
-```
