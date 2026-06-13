@@ -67,6 +67,34 @@ export function loginErrorMessage(error: unknown): string {
   return LOGIN_MESSAGES[classifyAuthError(error)];
 }
 
+/**
+ * The message to show for a failed REGISTRATION. Registration has different HTTP
+ * outcomes than login (notably 409 username-taken and 400 validation), so it maps
+ * the status directly rather than through {@link classifyAuthError}. Previously any
+ * non-2xx surfaced the raw `postJson` string ("request to /auth/register failed"),
+ * which gave the user no idea what went wrong — most often a 409 (the username was
+ * already taken, e.g. on a retry). These messages are non-leaking; "username taken"
+ * is ordinary registration UX, not a risk-signal disclosure.
+ */
+export function registerErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    switch (error.status) {
+      case 409:
+        return 'That username is already taken. Try another one.';
+      case 400:
+        return 'Please check your username and password, then try again.';
+      case 429:
+        return 'Too many attempts. Please wait and try again.';
+      default:
+        return 'Something went wrong creating your vault. Please try again.';
+    }
+  }
+  if (error instanceof TypeError) {
+    return "Couldn't reach the server";
+  }
+  return 'Something went wrong creating your vault. Please try again.';
+}
+
 /** The message to show for a failed step-up (TOTP) verification. */
 export function stepUpErrorMessage(error: unknown): string {
   return STEP_UP_MESSAGES[classifyAuthError(error)];

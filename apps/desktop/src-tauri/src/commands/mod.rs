@@ -61,40 +61,57 @@ pub struct RegistrationMaterialDto {
 /// Derive registration material from the master password (ADR-0001). The master
 /// password is wrapped in a zeroizing secret and never leaves Rust; only the auth
 /// key, public KDF params, and the opaque wrapped vault key are returned.
+///
+/// Argon2id (~0.5 s release / several seconds in a debug build) is CPU-bound, so it
+/// runs on a BLOCKING-SAFE thread via `spawn_blocking`: an `async` command keeps it
+/// off the webview main thread, so the UI never freezes during derivation. The
+/// password is moved into the closure, wrapped in a zeroizing secret there, and
+/// wiped when the closure returns — it never leaves Rust.
 #[tauri::command]
-pub fn prepare_registration(master_password: String) -> Result<RegistrationMaterialDto, String> {
-    let secret = SecretString::new(master_password);
-    let material = build_registration(&secret).map_err(|e| e.to_string())?;
-    Ok(RegistrationMaterialDto {
-        auth_key: STANDARD.encode(material.auth_key.as_bytes()),
-        kdf_version: material.kdf_version,
-        kdf_params: KdfParamsDto {
-            memory_kib: material.kdf_params.memory_kib,
-            iterations: material.kdf_params.iterations,
-            parallelism: material.kdf_params.parallelism,
-        },
-        kdf_salt: STANDARD.encode(material.kdf_salt),
-        wrapped_vault_key: STANDARD.encode(&material.wrapped_vault_key.ciphertext),
-        wrapped_vault_key_nonce: STANDARD.encode(material.wrapped_vault_key.nonce),
+pub async fn prepare_registration(
+    master_password: String,
+) -> Result<RegistrationMaterialDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let secret = SecretString::new(master_password);
+        let material = build_registration(&secret).map_err(|e| e.to_string())?;
+        Ok(RegistrationMaterialDto {
+            auth_key: STANDARD.encode(material.auth_key.as_bytes()),
+            kdf_version: material.kdf_version,
+            kdf_params: KdfParamsDto {
+                memory_kib: material.kdf_params.memory_kib,
+                iterations: material.kdf_params.iterations,
+                parallelism: material.kdf_params.parallelism,
+            },
+            kdf_salt: STANDARD.encode(material.kdf_salt),
+            wrapped_vault_key: STANDARD.encode(&material.wrapped_vault_key.ciphertext),
+            wrapped_vault_key_nonce: STANDARD.encode(material.wrapped_vault_key.nonce),
+        })
     })
+    .await
+    .map_err(|_| "key derivation was interrupted".to_owned())?
 }
 
 /// Derive the login auth key from the master password and the KDF params returned
 /// by prelogin. Returns the base64 auth key to send to the server; the master
-/// password never leaves Rust.
+/// password never leaves Rust. Argon2id runs on a blocking-safe thread (see
+/// `prepare_registration`) so the UI does not freeze.
 #[tauri::command]
-pub fn derive_login_auth_key_cmd(
+pub async fn derive_login_auth_key_cmd(
     master_password: String,
     kdf_salt: String,
     kdf_params: KdfParamsDto,
 ) -> Result<String, String> {
-    let secret = SecretString::new(master_password);
-    let salt = STANDARD
-        .decode(&kdf_salt)
-        .map_err(|_| "invalid salt".to_owned())?;
-    let params: KdfParams = kdf_params.into();
-    let auth_key = derive_login_auth_key(&secret, &salt, &params).map_err(|e| e.to_string())?;
-    Ok(STANDARD.encode(auth_key.as_bytes()))
+    tauri::async_runtime::spawn_blocking(move || {
+        let secret = SecretString::new(master_password);
+        let salt = STANDARD
+            .decode(&kdf_salt)
+            .map_err(|_| "invalid salt".to_owned())?;
+        let params: KdfParams = kdf_params.into();
+        let auth_key = derive_login_auth_key(&secret, &salt, &params).map_err(|e| e.to_string())?;
+        Ok(STANDARD.encode(auth_key.as_bytes()))
+    })
+    .await
+    .map_err(|_| "key derivation was interrupted".to_owned())?
 }
 
 /// An AEAD blob crossing the IPC boundary (base64 nonce + ciphertext, ADR-0005).
@@ -122,7 +139,7 @@ fn aead_from(ciphertext_b64: &str, nonce_b64: &str) -> Result<AeadCiphertext, St
 /// vault key from the master password + wrapped vault key; nothing secret is
 /// returned (only the opaque ciphertext + nonce).
 #[tauri::command]
-pub fn seal_credential(
+pub async fn seal_credential(
     master_password: String,
     kdf_salt: String,
     kdf_params: KdfParamsDto,
@@ -130,23 +147,30 @@ pub fn seal_credential(
     wrapped_vault_key_nonce: String,
     plaintext: String,
 ) -> Result<BlobDto, String> {
-    let salt = STANDARD
-        .decode(&kdf_salt)
-        .map_err(|_| "invalid salt".to_owned())?;
-    let wrapped = aead_from(&wrapped_vault_key, &wrapped_vault_key_nonce)?;
-    let secret = SecretString::new(master_password);
-    let vault_key = unwrap_login_vault_key(&secret, &salt, &kdf_params.into(), &wrapped)
-        .map_err(|e| e.to_string())?;
-    let blob = encrypt_credential(&vault_key, plaintext.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(BlobDto {
-        ciphertext: STANDARD.encode(&blob.ciphertext),
-        nonce: STANDARD.encode(blob.nonce),
+    // Re-derives the vault key (Argon2id) → run off the main thread (no UI freeze).
+    tauri::async_runtime::spawn_blocking(move || {
+        let salt = STANDARD
+            .decode(&kdf_salt)
+            .map_err(|_| "invalid salt".to_owned())?;
+        let wrapped = aead_from(&wrapped_vault_key, &wrapped_vault_key_nonce)?;
+        let secret = SecretString::new(master_password);
+        let vault_key = unwrap_login_vault_key(&secret, &salt, &kdf_params.into(), &wrapped)
+            .map_err(|e| e.to_string())?;
+        let blob =
+            encrypt_credential(&vault_key, plaintext.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(BlobDto {
+            ciphertext: STANDARD.encode(&blob.ciphertext),
+            nonce: STANDARD.encode(blob.nonce),
+        })
     })
+    .await
+    .map_err(|_| "key derivation was interrupted".to_owned())?
 }
 
-/// Decrypt an opaque blob pulled from the server back to its plaintext.
+/// Decrypt an opaque blob pulled from the server back to its plaintext. Re-derives
+/// the vault key (Argon2id) on a blocking-safe thread so the UI does not freeze.
 #[tauri::command]
-pub fn open_credential(
+pub async fn open_credential(
     master_password: String,
     kdf_salt: String,
     kdf_params: KdfParamsDto,
@@ -155,16 +179,20 @@ pub fn open_credential(
     ciphertext: String,
     nonce: String,
 ) -> Result<String, String> {
-    let salt = STANDARD
-        .decode(&kdf_salt)
-        .map_err(|_| "invalid salt".to_owned())?;
-    let wrapped = aead_from(&wrapped_vault_key, &wrapped_vault_key_nonce)?;
-    let secret = SecretString::new(master_password);
-    let vault_key = unwrap_login_vault_key(&secret, &salt, &kdf_params.into(), &wrapped)
-        .map_err(|e| e.to_string())?;
-    let blob = aead_from(&ciphertext, &nonce)?;
-    let plaintext = decrypt_credential(&vault_key, &blob).map_err(|e| e.to_string())?;
-    String::from_utf8(plaintext.expose().to_vec()).map_err(|_| "invalid utf-8".to_owned())
+    tauri::async_runtime::spawn_blocking(move || {
+        let salt = STANDARD
+            .decode(&kdf_salt)
+            .map_err(|_| "invalid salt".to_owned())?;
+        let wrapped = aead_from(&wrapped_vault_key, &wrapped_vault_key_nonce)?;
+        let secret = SecretString::new(master_password);
+        let vault_key = unwrap_login_vault_key(&secret, &salt, &kdf_params.into(), &wrapped)
+            .map_err(|e| e.to_string())?;
+        let blob = aead_from(&ciphertext, &nonce)?;
+        let plaintext = decrypt_credential(&vault_key, &blob).map_err(|e| e.to_string())?;
+        String::from_utf8(plaintext.expose().to_vec()).map_err(|_| "invalid utf-8".to_owned())
+    })
+    .await
+    .map_err(|_| "key derivation was interrupted".to_owned())?
 }
 
 /// Lock the shared manager, mapping mutex poisoning to a generic error.

@@ -19,7 +19,7 @@ vi.mock('../../lib/keystroke-capture', () => ({
 }));
 
 import { getEnrollmentStatus, ApiError } from '../../lib/api';
-import { completeStepUp, loginAccount } from '../../lib/auth';
+import { completeStepUp, loginAccount, registerAccount } from '../../lib/auth';
 import { AuthScreen } from './AuthScreen';
 
 const onAuthenticated = vi.fn();
@@ -115,6 +115,21 @@ describe('AuthScreen — distinct login outcomes (Part A)', () => {
     vi.mocked(loginAccount).mockRejectedValue(new TypeError('Failed to fetch'));
     renderLoginAndSubmit();
     expect(await screen.findByText("Couldn't reach the server")).toBeTruthy();
+    expect(onAuthenticated).not.toHaveBeenCalled();
+  });
+
+  it('register 409 → a clear "username taken" message (not the raw "request failed")', async () => {
+    vi.mocked(registerAccount).mockRejectedValue(new ApiError(409, 'request to /auth/register failed'));
+    render(<AuthScreen onAuthenticated={onAuthenticated} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Create a vault' })); // toggle to register
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'scottlaw' } });
+    fireEvent.change(screen.getByLabelText('Master password'), { target: { value: 'master-pw' } });
+    fireEvent.change(screen.getByLabelText('Confirm master password'), { target: { value: 'master-pw' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create vault' }));
+
+    expect(await screen.findByText('That username is already taken. Try another one.')).toBeTruthy();
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent ?? '').not.toContain('request to /auth/register failed');
     expect(onAuthenticated).not.toHaveBeenCalled();
   });
 });

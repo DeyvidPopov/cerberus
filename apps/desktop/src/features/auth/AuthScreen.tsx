@@ -7,10 +7,9 @@ import { Field } from '../../components/ui/label';
 import { Input } from '../../components/ui/input';
 import { EyeIcon, EyeOffIcon, ShieldCheckIcon } from '../../components/icons';
 import { getEnrollmentStatus } from '../../lib/api';
-import { loginErrorMessage, stepUpErrorMessage } from '../../lib/auth-errors';
+import { loginErrorMessage, registerErrorMessage, stepUpErrorMessage } from '../../lib/auth-errors';
 import { completeStepUp, loginAccount, registerAccount } from '../../lib/auth';
 import { useKeystrokeCapture } from '../../lib/keystroke-capture';
-import { errorMessage } from '../../lib/tauri';
 import { AuthFrame } from './AuthFrame';
 
 /** What a completed auth hands up: the session token and (on login) enrollment progress. */
@@ -100,8 +99,8 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
 
   // Each action supplies its own error→message mapping so every outcome renders a
   // DISTINCT, non-leaking message (ADR-0012): login maps 401/403/429/network
-  // separately; step-up reads a 401 as a bad code; register surfaces the raw
-  // (already non-leaking) Rust/IPC error.
+  // separately; step-up reads a 401 as a bad code; register maps 409 (username
+  // taken) / 400 / network distinctly instead of the raw "request failed" string.
   const run = (action: () => Promise<void>, mapError: (e: unknown) => string): void => {
     setError(null);
     setBusy(true);
@@ -122,7 +121,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
       return;
     }
     if (mode === 'register') {
-      run(doRegister, errorMessage);
+      run(doRegister, registerErrorMessage);
     } else {
       run(doLogin, loginErrorMessage);
     }
@@ -296,7 +295,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
           className="mt-1.5 w-full"
           disabled={busy || username.length === 0 || password.length === 0}
         >
-          {busy ? 'Working…' : isRegister ? 'Create vault' : 'Log in'}
+          {busy ? (isRegister ? 'Creating vault…' : 'Logging in…') : isRegister ? 'Create vault' : 'Log in'}
         </Button>
       </form>
 

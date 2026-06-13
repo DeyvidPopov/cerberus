@@ -4,6 +4,7 @@ import { ApiError } from './api';
 import {
   classifyAuthError,
   loginErrorMessage,
+  registerErrorMessage,
   stepUpErrorMessage,
   type AuthErrorKind,
 } from './auth-errors';
@@ -58,6 +59,30 @@ describe('loginErrorMessage — each outcome renders a distinct message', () => 
     expect(msg).not.toMatch(
       /keystroke|mouse|device|geo|velocity|score|band|signal|composite|behaviou?ral/iu,
     );
+  });
+});
+
+describe('registerErrorMessage — distinct, non-leaking registration outcomes', () => {
+  it('maps 409 to a clear "username taken" message (not the raw "request failed")', () => {
+    const msg = registerErrorMessage(new ApiError(409, 'request to /auth/register failed'));
+    expect(msg).toBe('That username is already taken. Try another one.');
+    expect(msg).not.toContain('request to');
+  });
+
+  it('maps 400 / 429 / network / unknown to distinct messages', () => {
+    expect(registerErrorMessage(new ApiError(400, 'x'))).toMatch(/check your username/i);
+    expect(registerErrorMessage(new ApiError(429, 'x'))).toMatch(/too many attempts/i);
+    expect(registerErrorMessage(new TypeError('Failed to fetch'))).toBe("Couldn't reach the server");
+    expect(registerErrorMessage(new ApiError(500, 'x'))).toMatch(/something went wrong/i);
+    expect(registerErrorMessage('rust derivation failed')).toMatch(/something went wrong/i);
+  });
+
+  it('never surfaces the raw postJson "request to /auth/register failed" string', () => {
+    for (const status of [400, 409, 429, 500]) {
+      expect(registerErrorMessage(new ApiError(status, 'request to /auth/register failed'))).not.toContain(
+        'request to /auth/register failed',
+      );
+    }
   });
 });
 
