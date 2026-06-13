@@ -1,0 +1,69 @@
+{
+  "seed": 20240601,
+  "subjects": 51,
+  "validationGenuineCount": 2550,
+  "validationImpostorCount": 12750,
+  "behavioralWeight": 0.5,
+  "eer": {
+    "rate": 0.19254901960784312,
+    "threshold": 0.0020421965218663917,
+    "composite": 0.001,
+    "far": 0.19254901960784312,
+    "frr": 0.19254901960784312
+  },
+  "chosen": {
+    "maxFrr": 0.07,
+    "threshold": 0.5708882521477487,
+    "composite": 0.2854,
+    "far": 0.4883921568627451,
+    "frr": 0.06980392156862746
+  },
+  "sweep": [
+    {
+      "composite": 0.1,
+      "scoreThreshold": 0.2,
+      "far": 0.4008627450980392,
+      "frr": 0.0988235294117647
+    },
+    {
+      "composite": 0.15,
+      "scoreThreshold": 0.3,
+      "far": 0.4283921568627451,
+      "frr": 0.08862745098039215
+    },
+    {
+      "composite": 0.2,
+      "scoreThreshold": 0.4,
+      "far": 0.45215686274509803,
+      "frr": 0.08196078431372548
+    },
+    {
+      "composite": 0.25,
+      "scoreThreshold": 0.5,
+      "far": 0.47380392156862744,
+      "frr": 0.07215686274509804
+    },
+    {
+      "composite": 0.3,
+      "scoreThreshold": 0.6,
+      "far": 0.4923921568627451,
+      "frr": 0.06862745098039216
+    },
+    {
+      "composite": 0.4,
+      "scoreThreshold": 0.8,
+      "far": 0.5337254901960784,
+      "frr": 0.05843137254901961
+    },
+    {
+      "composite": 0.5,
+      "scoreThreshold": 1,
+      "far": 1,
+      "frr": 0
+    }
+  ],
+  "recommendedBands": {
+    "stepUp": 0.29,
+    "deny": 0.7
+  }
+}

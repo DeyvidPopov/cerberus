@@ -5,6 +5,7 @@
 // Pure constants live here. The env-tunable ones (the enrollment threshold, the
 // at-rest baseline key) are read in apps/server/src/config.ts and default to the
 // values below.
+import { MOUSE_WINDOW_SIZE } from '@cerberus/shared-types';
 
 /**
  * Samples required before a baseline is fitted and activated (ADR-0002). With
@@ -96,6 +97,91 @@ export const DEFAULT_EVALUATION_CONFIG: EvaluationConfig = {
 };
 
 // ---------------------------------------------------------------------------
+// Mouse offline benchmark (M11 / ADR-0014): Balabit Mouse Dynamics Challenge.
+// MIRRORS the keystroke protocol (train on a user's genuine windows; impostor =
+// other users) with the SAME runEvaluation + detectors, so the two modalities are
+// apples-to-apples. Window size is the DEPLOYED M10 extractor's window (so the
+// benchmark describes production); the benchmark uses NON-OVERLAPPING windows
+// (independent samples) and caps windows/session for tractability. Named config.
+// ---------------------------------------------------------------------------
+
+/** Per-user genuine windows used to fit the model (mouse analogue of KM_TRAIN_SIZE). */
+export const MOUSE_EVAL_TRAIN_SIZE = 100;
+/** Windows drawn from EACH other user as impostors (mouse analogue of KM_IMPOSTOR_REPS). */
+export const MOUSE_EVAL_IMPOSTOR_WINDOWS = 30;
+/** Benchmark windows are non-overlapping: step == the deployed window size. */
+export const MOUSE_BENCHMARK_WINDOW_STEP = MOUSE_WINDOW_SIZE;
+/** Cap windows extracted per session (tractability + balance across sessions). */
+export const MOUSE_MAX_WINDOWS_PER_SESSION = 150;
+
+/** How the offline harness slices a session's pointer stream into feature windows. */
+export interface MouseBenchmarkWindowConfig {
+  readonly windowSize: number;
+  readonly windowStep: number;
+  readonly maxWindowsPerSession: number;
+}
+
+export const DEFAULT_MOUSE_WINDOW_CONFIG: MouseBenchmarkWindowConfig = {
+  windowSize: MOUSE_WINDOW_SIZE,
+  windowStep: MOUSE_BENCHMARK_WINDOW_STEP,
+  maxWindowsPerSession: MOUSE_MAX_WINDOWS_PER_SESSION,
+};
+
+/** Detector/EER config for the mouse benchmark: SAME detectors + seed, mouse split. */
+export const DEFAULT_MOUSE_EVALUATION_CONFIG: EvaluationConfig = {
+  ...DEFAULT_EVALUATION_CONFIG,
+  trainSize: MOUSE_EVAL_TRAIN_SIZE,
+  impostorReps: MOUSE_EVAL_IMPOSTOR_WINDOWS,
+};
+
+// ---------------------------------------------------------------------------
+// Threshold + weight tuning (M11 / ADR-0014). The login band thresholds are tuned
+// on a VALIDATION split of the keystroke data that is DISJOINT from the K&M test
+// set used for the reported EER (no tuning-on-test, PROJECT.md §6). The behavioral
+// SCORE here is the production chi-squared CDF (scoreSample), not the raw distance.
+// ---------------------------------------------------------------------------
+
+/** Reps [0, TUNE_TRAIN_SIZE) fit the baseline; [TUNE_TRAIN_SIZE, KM_TRAIN_SIZE) are validation genuine. */
+export const TUNE_TRAIN_SIZE = 150;
+/**
+ * Validation impostors are reps [KM_IMPOSTOR_REPS, 2·KM_IMPOSTOR_REPS) of every
+ * other subject — DISJOINT from the K&M test impostors (reps [0, KM_IMPOSTOR_REPS)).
+ */
+export const TUNE_IMPOSTOR_START = KM_IMPOSTOR_REPS;
+export const TUNE_IMPOSTOR_END = 2 * KM_IMPOSTOR_REPS;
+/**
+ * Genuine false-step-up budget for the chosen step-up operating point. The
+ * keystroke χ² score is a SOFT login signal (genuine scores cluster near 0,
+ * impostors spread high), so the meaningful knob is genuine friction (FRR), not a
+ * behavioral-only FAR — the residual behavioral FAR is closed by contextual
+ * stacking + the TOTP step-up (ADR-0012). We pick the most sensitive composite
+ * step-up threshold that keeps genuine false-step-ups ≤ this budget on validation.
+ */
+export const TUNE_MAX_STEPUP_FRR = 0.07;
+/** Composite step-up candidates reported in the tuning sweep (for transparency). */
+export const TUNE_STEPUP_CANDIDATES = [0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5] as const;
+
+export interface TuningConfig {
+  readonly seed: number;
+  readonly trainSize: number;
+  readonly validationGenuineEnd: number;
+  readonly impostorStart: number;
+  readonly impostorEnd: number;
+  readonly maxStepUpFrr: number;
+  readonly stepUpCandidates: readonly number[];
+}
+
+export const DEFAULT_TUNING_CONFIG: TuningConfig = {
+  seed: EVALUATION_SEED,
+  trainSize: TUNE_TRAIN_SIZE,
+  validationGenuineEnd: KM_TRAIN_SIZE, // [trainSize, KM_TRAIN_SIZE) genuine validation; test set is [KM_TRAIN_SIZE, end)
+  impostorStart: TUNE_IMPOSTOR_START,
+  impostorEnd: TUNE_IMPOSTOR_END,
+  maxStepUpFrr: TUNE_MAX_STEPUP_FRR,
+  stepUpCandidates: TUNE_STEPUP_CANDIDATES,
+};
+
+// ---------------------------------------------------------------------------
 // Contextual risk signals (M8 / ADR-0011). Every threshold/window is named here
 // (PROJECT.md §4.4) so the signals are tunable without code changes. Scores are
 // LOGGED, never enforced this milestone; the combiner/policy is M9.
@@ -153,7 +239,10 @@ export interface ContextualConfig {
  * composite = clamp01(Σ weight_i · subscore_i), so a single strong signal
  * (impossible travel, a new device, high failure velocity) reaches step_up on its
  * own and stacked strong signals reach deny. The behavioral weight reflects that
- * keystroke dynamics is a moderately strong discriminator (M7 EER ≈ 13%).
+ * keystroke dynamics is a MODERATE discriminator — M7 EER ≈ 13% (CMU test set) and
+ * ≈ 19% on the M11 held-out validation split (ADR-0014); strong enough to weight at
+ * 0.5 but not to decide alone, hence weight 0.5 (a perfect-anomaly behavioral score
+ * reaches step_up at 0.30 but never deny at 0.70 on its own). RETAINED in M11.
  */
 export interface CombinerWeights {
   readonly behavioral: number;
@@ -173,10 +262,18 @@ export const DEFAULT_COMBINER_WEIGHTS: CombinerWeights = {
 
 /**
  * Band thresholds on the composite score: composite ≥ deny → deny;
- * ≥ stepUp → step_up; else grant. Starting points (ADR-0012): stepUp where a
- * single moderate signal warrants verifying it is really the user; deny where
- * stacked strong signals indicate an attack. Informed by the M7 behavioral
- * operating point; tuned in M11.
+ * ≥ stepUp → step_up; else grant.
+ *
+ * TUNED in M11 (ADR-0014, `npm run eval:tune`, docs/evaluation/threshold-tuning.md):
+ * on a held-out CMU validation split (disjoint from the K&M test set) the most
+ * sensitive composite step-up keeping the genuine false-step-up rate ≤ 7% is
+ * **0.29** (genuine FRR 6.98%, behavioral-only FAR 48.8%, behavioral EER 19.25%).
+ * We keep **stepUp 0.30** — within rounding of the tuned 0.29 and a clean value —
+ * as a low-friction point: behavioral is a SOFT contributing signal, so its residual
+ * FAR is closed by contextual stacking + TOTP step-up, not by behavioral alone. The
+ * EER point (~19% genuine step-ups) was rejected as too high-friction.
+ * **deny 0.70** stays above the maximum single-signal contribution (max weight 0.5),
+ * so a deny requires STACKED signals (ADR-0012) — no single signal denies alone.
  */
 export interface BandThresholds {
   readonly stepUp: number;

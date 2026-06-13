@@ -9,7 +9,10 @@
     "start": "tsx --env-file-if-exists=../../.env src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "eval:keystroke": "tsx src/eval/run-keystroke-eval.ts"
+    "eval:keystroke": "tsx src/eval/run-keystroke-eval.ts",
+    "eval:mouse": "tsx src/eval/run-mouse-eval.ts",
+    "eval:tune": "tsx src/eval/run-threshold-tuning.ts",
+    "eval:integrated": "tsx src/eval/run-integrated-analysis.ts"
   },
   "dependencies": {
     "@cerberus/protocol": "*",
