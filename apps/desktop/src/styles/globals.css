@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* M12 design system (ADR-0015). Tokens live in tailwind.config.js; this file holds
+   the base canvas, the few composite backgrounds (gradient + dot-grid + brass glow)
+   that are awkward as utilities, and the typing-rhythm wave animation. */
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-canvas text-fg font-sans antialiased;
+  }
+  ::selection {
+    background: rgba(232, 162, 74, 0.3);
+  }
+  /* Focus ring in the brass accent, consistent across inputs/buttons. */
+  :where(input, button, [tabindex]):focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(232, 162, 74, 0.45);
+  }
+}
+
+@layer components {
+  /* Full-window canvas: layered radial gradients + faint dot grid + brass glow. */
+  .app-canvas {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: radial-gradient(120% 90% at 72% 8%, #16181e 0%, #0b0c0f 52%, #070809 100%);
+  }
+  .app-canvas::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(40% 50% at 84% 92%, rgba(232, 162, 74, 0.1), transparent 70%);
+  }
+  .app-canvas::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.35;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+    background-size: 26px 26px;
+  }
+  /* The signature card gradient (auth + vault shells). */
+  .surface-card {
+    background: linear-gradient(165deg, #15171d, #0f1115);
+  }
+  .surface-panel {
+    background: linear-gradient(160deg, #101218 0%, #0c0d11 100%);
+  }
+  .surface-elevated {
+    background: linear-gradient(165deg, #181b21, #141519);
+  }
+  /* Brass primary fill (buttons). */
+  .fill-accent {
+    background: linear-gradient(180deg, #eba64e, #dd9333);
+  }
+}
+
+@layer utilities {
+  .wave-bar {
+    transform-origin: bottom;
+    animation: wave 1.1s ease-in-out infinite;
+  }
+}
+
+@keyframes wave {
+  0%,
+  100% {
+    transform: scaleY(0.22);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}

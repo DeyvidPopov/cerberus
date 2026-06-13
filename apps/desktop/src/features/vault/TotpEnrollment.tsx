@@ -1,11 +1,16 @@
-// TOTP enrollment nudge (Milestone 10, Part A). Reachable from the vault once the
-// behavioral baseline is active: fail-closed step-up (ADR-0012) DENIES a user with
-// no confirmed second factor when risk escalates, so an active-baseline user must
-// be prompted to set up TOTP. Uses the existing setup/confirm endpoints; the
-// secret is shown once for the user to add to an authenticator app.
+// TOTP enrollment nudge (Milestone 10, Part A; restyled M12 / ADR-0015). Reachable
+// from the vault once the behavioral baseline is active: fail-closed step-up
+// (ADR-0012) DENIES a user with no confirmed second factor when risk escalates, so
+// an active-baseline user is prompted to set up TOTP. Uses the existing
+// setup/confirm endpoints; the secret/URI are shown once for the authenticator app.
+// PRESENTATION ONLY — handlers, endpoints, and copy semantics are unchanged.
 import type { TotpSetupResponse } from '@cerberus/shared-types';
 import { useState } from 'react';
 
+import { ShieldCheckIcon } from '../../components/icons';
+import { Banner } from '../../components/ui/banner';
+import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
 import { confirmTotp, setupTotp } from '../../lib/api';
 import { errorMessage } from '../../lib/tauri';
 
@@ -64,62 +69,73 @@ export function TotpEnrollment({ token, onConfirmed }: TotpEnrollmentProps) {
 
   if (phase === 'prompt') {
     return (
-      <section className="totp-nudge" role="region" aria-label="Two-step verification">
-        <h2>Add two-step verification</h2>
-        <p>
-          Your typing profile is active. Set up an authenticator app so you can still get in if a
-          login looks risky.
-        </p>
-        <button type="button" onClick={begin} disabled={busy}>
+      <section
+        role="region"
+        aria-label="Two-step verification"
+        className="flex items-center gap-3.5 rounded-[13px] border border-info/20 bg-info/[0.07] px-4 py-[13px]"
+      >
+        <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[10px] bg-info/[0.14] text-info">
+          <ShieldCheckIcon size={18} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-fg">Add a second factor</div>
+          <div className="mt-px text-[12.5px] text-muted">
+            Keep step-up verification working if a login ever needs confirming.
+          </div>
+        </div>
+        <Button size="chip" onClick={begin} disabled={busy} className="flex-none">
           {busy ? 'Starting…' : 'Set up'}
-        </button>
-        {error !== null && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
+        </Button>
+        {error !== null && <Banner className="basis-full" tone="error" title={error} />}
       </section>
     );
   }
 
   return (
-    <section className="totp-nudge" role="region" aria-label="Two-step verification">
-      <h2>Scan or enter this secret</h2>
-      <p>Add this to your authenticator app, then enter the 6-digit code to confirm.</p>
+    <section
+      role="region"
+      aria-label="Two-step verification"
+      className="surface-elevated rounded-[14px] border border-line p-5"
+    >
+      <h2 className="font-display text-[17px] font-semibold tracking-[-0.01em]">Add a second factor</h2>
+      <p className="mt-1.5 text-[12.5px] leading-[1.5] text-muted">
+        Add the setup key to your authenticator app, then enter the 6-digit code to confirm.
+      </p>
+
       {setup !== null && (
-        <dl>
-          <dt>Secret</dt>
-          <dd>
-            <code>{setup.secret}</code>
-          </dd>
-        </dl>
+        <div className="mt-4 rounded-xl border border-line bg-field px-4 py-3">
+          <div className="text-[11px] tracking-[0.04em] text-muted2">SETUP KEY</div>
+          <code className="mt-1.5 block break-all font-mono text-[13px] leading-[1.5] text-fg">
+            {setup.secret}
+          </code>
+        </div>
       )}
+
       <form
+        className="mt-4 flex items-center gap-2.5"
         onSubmit={(e) => {
           e.preventDefault();
           confirm();
         }}
       >
-        <input
+        <Input
           aria-label="Confirmation code"
           placeholder="123456"
           inputMode="numeric"
           autoComplete="one-time-code"
+          maxLength={8}
+          className="h-11 max-w-[180px] font-mono tracking-[0.3em]"
           value={code}
           onChange={(e) => {
             setCode(e.target.value);
           }}
           disabled={busy}
         />
-        <button type="submit" disabled={busy || code.length < 6}>
+        <Button type="submit" size="sm" disabled={busy || code.length < 6}>
           {busy ? 'Confirming…' : 'Confirm'}
-        </button>
+        </Button>
       </form>
-      {error !== null && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
+      {error !== null && <Banner className="mt-3" tone="error" title={error} />}
     </section>
   );
 }

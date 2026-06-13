@@ -22,6 +22,7 @@ security invariants below take precedence over speed or convenience.
   - 0012 adaptive policy + enforcement + TOTP step-up (combiner, bands, brute-force model)
   - 0013 continuous auth: mouse dynamics, windowed WS streaming, spike→lock (modality reuse)
   - 0014 evaluation methodology: Balabit mouse benchmark, operating-point tuning, integrated study
+  - 0015 UI design system ("Vault" direction): shadcn/ui + Tailwind tokens, no-risk-detail copy rule
 - `docs/threat-model.md` — assets, adversaries, trust boundaries.
 
 ## Non-negotiable security invariants

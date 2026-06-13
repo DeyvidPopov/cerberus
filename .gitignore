@@ -55,6 +55,12 @@ docs/evaluation/data/
 apps/server/data/
 
 # ---------------------------------------------------------------------------
+# Design reference mockup (M12 / ADR-0015). The visual target for the UI restyle;
+# it is NOT imported by the app and is never shipped/bundled. Kept locally only.
+# ---------------------------------------------------------------------------
+/design/
+
+# ---------------------------------------------------------------------------
 # Logs & misc
 # ---------------------------------------------------------------------------
 *.log

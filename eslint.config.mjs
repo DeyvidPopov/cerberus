@@ -23,6 +23,10 @@ export default tseslint.config(
       'apps/desktop/src-tauri/**',
       // Root tooling config, not part of any workspace tsconfig project.
       'vitest.config.ts',
+      // UI design reference mockup (M12 / ADR-0015) — not project code, never shipped.
+      'design/**',
+      // Standalone design-direction previews (M12 step 1) — plain HTML, not linted.
+      'docs/design/**',
     ],
   },
 

@@ -1,11 +1,17 @@
 import type { EnrollmentStatus, GrantedLoginResponse } from '@cerberus/shared-types';
 import { useState } from 'react';
 
+import { Banner } from '../../components/ui/banner';
+import { Button } from '../../components/ui/button';
+import { Field } from '../../components/ui/label';
+import { Input } from '../../components/ui/input';
+import { EyeIcon, EyeOffIcon, ShieldCheckIcon } from '../../components/icons';
 import { getEnrollmentStatus } from '../../lib/api';
 import { loginErrorMessage, stepUpErrorMessage } from '../../lib/auth-errors';
 import { completeStepUp, loginAccount, registerAccount } from '../../lib/auth';
 import { useKeystrokeCapture } from '../../lib/keystroke-capture';
 import { errorMessage } from '../../lib/tauri';
+import { AuthFrame } from './AuthFrame';
 
 /** What a completed auth hands up: the session token and (on login) enrollment progress. */
 export interface AuthenticatedSession {
@@ -13,8 +19,13 @@ export interface AuthenticatedSession {
   enrollment: EnrollmentStatus | null;
 }
 
+/** Why the unlock screen was shown again. 'risk' ⇒ a continuous-auth spike locked the vault. */
+export type LockReason = 'risk' | null;
+
 interface AuthScreenProps {
   onAuthenticated: (session: AuthenticatedSession) => void;
+  /** PRESENTATION ONLY: show a calm "locked for your security" notice on re-unlock. */
+  lockNotice?: LockReason;
 }
 
 type Mode = 'login' | 'register';
@@ -22,16 +33,20 @@ type Mode = 'login' | 'register';
 // Entry screen. The master password lives in component state only until handed to
 // the Rust derivation, then cleared (PROJECT.md §4.2). The password input's
 // KEYSTROKE TIMING (positions only, never characters — see lib/keystroke) is
-// captured during login and sent WITH the login request as a position-indexed
-// feature vector; the server runs the adaptive policy (ADR-0012) and either grants
-// a session or requires a TOTP step-up. The password value still flows only to Rust.
-export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
+// captured during login and sent WITH the login request; the server runs the
+// adaptive policy (ADR-0012). The password value still flows only to Rust.
+//
+// M12 is a PRESENTATION restyle (ADR-0015): the master-password <Input> forwards
+// its ref to a real <input>, so keystroke capture attaches exactly as before, and
+// every outcome message is the unchanged M10 generic copy (no risk detail leaks).
+export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenProps) {
   const [mode, setMode] = useState<Mode>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showPw, setShowPw] = useState(false);
   // When a login bands to step_up, hold the challenge until the TOTP code is entered.
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState('');
@@ -117,37 +132,89 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     setMode((current) => (current === 'login' ? 'register' : 'login'));
     setError(null);
     setChallengeToken(null);
+    setShowPw(false);
     capture.reset();
     clearSecrets();
   };
 
-  // Step-up prompt: a second factor is required before the session is issued.
+  // A password field with a show/hide affordance. `inputRef` (when given) is the
+  // keystroke-capture ref — it must reach the real <input> (Input forwards it).
+  const passwordField = (opts: {
+    label: string;
+    value: string;
+    onChange: (v: string) => void;
+    autoComplete: string;
+    inputRef?: (el: HTMLInputElement | null) => void;
+    valid?: boolean;
+  }) => (
+    <Field label={opts.label}>
+      <div className="relative">
+        <Input
+          ref={opts.inputRef}
+          type={showPw ? 'text' : 'password'}
+          aria-label={opts.label}
+          placeholder="••••••••••••"
+          autoComplete={opts.autoComplete}
+          className={opts.valid ? 'border-ok/40 pr-11 font-mono' : 'pr-11 font-mono'}
+          value={opts.value}
+          onChange={(e) => {
+            opts.onChange(e.target.value);
+          }}
+          disabled={busy}
+        />
+        <button
+          type="button"
+          aria-label={showPw ? 'Hide password' : 'Show password'}
+          onClick={() => {
+            setShowPw((s) => !s);
+          }}
+          className="absolute right-1.5 top-1.5 flex h-[34px] w-[34px] items-center justify-center rounded-lg text-muted2 hover:text-fg"
+        >
+          {showPw ? <EyeOffIcon size={17} /> : <EyeIcon size={17} />}
+        </button>
+      </div>
+    </Field>
+  );
+
+  // STEP-UP — a focused, reassuring prompt (info tone), not an error.
   if (challengeToken !== null) {
     return (
-      <main className="screen">
-        <h1>Cerberus</h1>
-        <h2>Verify it’s you</h2>
-        <p>Enter the 6-digit code from your authenticator app.</p>
+      <AuthFrame>
+        <div className="text-center">
+          <div className="mx-auto flex h-[54px] w-[54px] items-center justify-center rounded-[15px] border border-accent/30 bg-accent/[0.12] text-accent">
+            <ShieldCheckIcon size={26} />
+          </div>
+          <h1 className="mt-[18px] font-display text-2xl font-semibold tracking-[-0.02em]">
+            Additional verification needed
+          </h1>
+          <p className="mx-auto mt-2 max-w-[300px] text-[13.5px] leading-[1.55] text-muted">
+            Please confirm it&rsquo;s you. Enter the 6-digit code from your authenticator app.
+          </p>
+        </div>
         <form
+          className="mt-6"
           onSubmit={(e) => {
             e.preventDefault();
             run(doStepUp, stepUpErrorMessage);
           }}
         >
-          <input
+          <Input
             aria-label="Authenticator code"
             placeholder="123456"
             inputMode="numeric"
             autoComplete="one-time-code"
+            maxLength={8}
+            className="text-center font-mono text-xl tracking-[0.5em]"
             value={totpCode}
             onChange={(e) => {
               setTotpCode(e.target.value);
             }}
             disabled={busy}
           />
-          <button type="submit" disabled={busy || totpCode.length < 6}>
+          {error !== null && <Banner className="mt-4" tone="error" title={error} />}
+          <Button type="submit" className="mt-5 w-full" disabled={busy || totpCode.length < 6}>
             {busy ? 'Verifying…' : 'Verify'}
-          </button>
+          </Button>
         </form>
         <button
           type="button"
@@ -156,75 +223,89 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             setError(null);
           }}
           disabled={busy}
+          className="mt-4 block w-full text-center text-[13px] text-muted2 hover:text-fg disabled:opacity-50"
         >
-          Cancel
+          Use a different account
         </button>
-        {error !== null && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-      </main>
+      </AuthFrame>
     );
   }
 
+  const isRegister = mode === 'register';
+  const confirmValid = isRegister && confirm.length > 0 && confirm === password;
+
   return (
-    <main className="screen">
-      <h1>Cerberus</h1>
-      <h2>{mode === 'register' ? 'Create your vault' : 'Unlock your vault'}</h2>
+    <AuthFrame>
+      <h1 className="font-display text-[25px] font-semibold tracking-[-0.02em]">
+        {isRegister ? 'Create your vault' : 'Unlock your vault'}
+      </h1>
+      <p className="mt-[7px] text-[13.5px] leading-[1.5] text-muted">
+        {isRegister
+          ? "One master password unlocks everything. Make it strong — we can't recover it."
+          : 'Welcome back. Enter your master password to continue.'}
+      </p>
+
+      {/* Continuous-auth spike-lock notice (presentation only; generic copy). */}
+      {!isRegister && lockNotice === 'risk' && (
+        <Banner className="mt-5" tone="info" title="Locked for your security">
+          Please unlock again to continue. Your credentials stayed encrypted and safe.
+        </Banner>
+      )}
+
+      {error !== null && <Banner className="mt-5" tone="error" title={error} />}
+
       <form
+        className="mt-[22px] flex flex-col gap-[15px]"
         onSubmit={(e) => {
           e.preventDefault();
           submit();
         }}
       >
-        <input
-          aria-label="Username"
-          placeholder="Username"
-          autoComplete="username"
-          value={username}
-          onChange={(e) => {
-            setUsername(e.target.value);
-          }}
-          disabled={busy}
-        />
-        <input
-          ref={capture.inputRef}
-          type="password"
-          aria-label="Master password"
-          placeholder="Master password"
-          autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-          value={password}
-          onChange={(e) => {
-            setPassword(e.target.value);
-          }}
-          disabled={busy}
-        />
-        {mode === 'register' && (
-          <input
-            type="password"
-            aria-label="Confirm master password"
-            placeholder="Confirm master password"
-            autoComplete="new-password"
-            value={confirm}
+        <Field label="Username">
+          <Input
+            aria-label="Username"
+            placeholder="you"
+            autoComplete="username"
+            value={username}
             onChange={(e) => {
-              setConfirm(e.target.value);
+              setUsername(e.target.value);
             }}
             disabled={busy}
           />
-        )}
-        <button type="submit" disabled={busy || username.length === 0 || password.length === 0}>
-          {busy ? 'Working…' : mode === 'register' ? 'Register' : 'Log in'}
-        </button>
+        </Field>
+
+        {passwordField({
+          label: 'Master password',
+          value: password,
+          onChange: setPassword,
+          autoComplete: isRegister ? 'new-password' : 'current-password',
+          inputRef: capture.inputRef,
+        })}
+
+        {isRegister &&
+          passwordField({
+            label: 'Confirm master password',
+            value: confirm,
+            onChange: setConfirm,
+            autoComplete: 'new-password',
+            valid: confirmValid,
+          })}
+
+        <Button
+          type="submit"
+          className="mt-1.5 w-full"
+          disabled={busy || username.length === 0 || password.length === 0}
+        >
+          {busy ? 'Working…' : isRegister ? 'Create vault' : 'Log in'}
+        </Button>
       </form>
-      <button type="button" onClick={toggleMode} disabled={busy}>
-        {mode === 'register' ? 'Have an account? Log in' : 'New here? Create a vault'}
-      </button>
-      {error !== null && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-    </main>
+
+      <div className="mt-[18px] text-center text-[13px] text-muted2">
+        {isRegister ? 'Have an account? ' : 'New here? '}
+        <button type="button" onClick={toggleMode} disabled={busy} className="font-medium text-accent-hi hover:underline">
+          {isRegister ? 'Log in' : 'Create a vault'}
+        </button>
+      </div>
+    </AuthFrame>
   );
 }
