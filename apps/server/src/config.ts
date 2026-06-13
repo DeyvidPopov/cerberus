@@ -6,12 +6,14 @@ import {
   DEFAULT_BEHAVIORAL_CONFIG,
   DEFAULT_COMBINER_WEIGHTS,
   DEFAULT_CONTEXTUAL_CONFIG,
+  DEFAULT_CONTINUOUS_AUTH_CONFIG,
   DEFAULT_TOTP_CONFIG,
   type BackstopConfig,
   type BandThresholds,
   type BehavioralConfig,
   type CombinerWeights,
   type ContextualConfig,
+  type ContinuousAuthConfig,
   type TotpConfig,
 } from './risk/config';
 
@@ -55,6 +57,8 @@ export interface ServerConfig {
   readonly contextual: ContextualConfig;
   /** Adaptive-policy config (ADR-0012). */
   readonly policy: PolicyConfig;
+  /** Continuous-auth (mouse) config (ADR-0013): mouse enrollment + in-session spike→lock. */
+  readonly continuousAuth: ContinuousAuthConfig;
   /**
    * Path to a local MaxMind GeoLite2-City .mmdb for offline geo (ADR-0011). When
    * unset/missing the geovelocity signal stays neutral. Never an external API.
@@ -65,11 +69,25 @@ export interface ServerConfig {
    * proxy (the M4 open item). A number of hops, a boolean, or a preset string.
    */
   readonly trustProxy: boolean | number | string;
+  /**
+   * Origins allowed to call the API cross-origin (the desktop webview). The Tauri
+   * app runs at its own origin and must be allow-listed for register/login etc. to
+   * reach the server (CORS). Env CORS_ALLOWED_ORIGINS (comma-separated) overrides.
+   */
+  readonly corsAllowedOrigins: string[];
 }
 
 const DEFAULT_PORT = 8080;
 const DEFAULT_DATABASE_URL = 'postgres://postgres:postgres@127.0.0.1:5432/cerberus';
 const DEV_ENUMERATION_SECRET = 'dev-only-enumeration-secret-change-me';
+// The desktop app's origins: the Vite dev server (devUrl) + the built-app custom
+// protocol origins (Windows uses http(s)://tauri.localhost; others tauri://localhost).
+const DEFAULT_CORS_ORIGINS = [
+  'http://localhost:1420',
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+  'tauri://localhost',
+];
 // A fixed, obviously-non-secret 32-byte dev key. Production refuses to start with it.
 const DEV_BASELINE_KEY_HEX =
   '0000000000000000000000000000000000000000000000000000000000000000';
@@ -82,6 +100,18 @@ function intFromEnv(name: string, fallback: number): number {
 function floatFromEnv(name: string, fallback: number): number {
   const parsed = Number.parseFloat(process.env[name] ?? '');
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+/** Comma-separated env list (trimmed, empties dropped), or the fallback. */
+function csvFromEnv(name: string, fallback: string[]): string[] {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') {
+    return fallback;
+  }
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 /** Parse the Express trust-proxy setting from env: number of hops | boolean | preset. */
@@ -172,7 +202,20 @@ export function loadConfig(): ServerConfig {
       },
       totp: DEFAULT_TOTP_CONFIG,
     },
+    continuousAuth: {
+      ...DEFAULT_CONTINUOUS_AUTH_CONFIG,
+      minEnrollmentSamples: intFromEnv(
+        'MOUSE_MIN_ENROLLMENT_SAMPLES',
+        DEFAULT_CONTINUOUS_AUTH_CONFIG.minEnrollmentSamples,
+      ),
+      ewmaAlpha: floatFromEnv('CONTINUOUS_AUTH_EWMA_ALPHA', DEFAULT_CONTINUOUS_AUTH_CONFIG.ewmaAlpha),
+      spikeThreshold: floatFromEnv(
+        'CONTINUOUS_AUTH_SPIKE_THRESHOLD',
+        DEFAULT_CONTINUOUS_AUTH_CONFIG.spikeThreshold,
+      ),
+    },
     geoipDbPath: process.env.GEOIP_DB_PATH,
     trustProxy: trustProxyFromEnv(),
+    corsAllowedOrigins: csvFromEnv('CORS_ALLOWED_ORIGINS', DEFAULT_CORS_ORIGINS),
   };
 }

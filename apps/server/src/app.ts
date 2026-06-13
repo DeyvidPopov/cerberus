@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 
 import type { ServerConfig } from './config';
 import { createAuthenticate } from './middleware/authenticate';
+import { cors } from './middleware/cors';
 import { errorHandler } from './middleware/error-handler';
 import { notFound } from './middleware/not-found';
 import { rateLimitByIp, rateLimitByUser } from './middleware/rate-limit';
@@ -40,6 +41,9 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
   app.set('trust proxy', config.trustProxy);
 
   app.use(requestId);
+  // CORS first so the desktop webview's cross-origin preflight is answered before
+  // any handler (the app calls this API from its own origin).
+  app.use(cors(config.corsAllowedOrigins));
   app.use(express.json());
 
   // Shared per-process rate-limit state (PROJECT.md §4.3).

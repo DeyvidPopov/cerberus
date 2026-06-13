@@ -1,11 +1,18 @@
 import type { Db } from './pool';
 
-// Behavioral-baseline persistence (ADR-0002, ADR-0009). Stores the fitted model
-// ONLY (mean + covariance), encrypted at rest, pseudonymized by user_id. NO raw
-// keystroke captures are ever stored here. Every method is scoped to user_id
-// (defense against IDOR). The encrypted model blob is biometric-adjacent, so it
-// is NOT returned by the routine status path — only `findActiveByUser` (metadata)
-// is; the blob is fetched separately (M7 scoring / tests) via `findActiveModel`.
+// Behavioral-baseline persistence (ADR-0002, ADR-0009, ADR-0013). Stores the fitted
+// model ONLY (mean + covariance), encrypted at rest, pseudonymized by user_id. NO
+// raw captures are ever stored here. Every method is scoped to (user_id, modality)
+// (defense against IDOR). The encrypted model blob is biometric-adjacent, so it is
+// NOT returned by the routine status path — only `findActiveByUser` (metadata) is;
+// the blob is fetched separately (scoring / tests) via `findActiveModel`.
+//
+// One baseline per modality (ADR-0013): the SAME table/lifecycle holds both the
+// keystroke and mouse baselines; `modality` discriminates them. It defaults to
+// 'keystroke' so the M6/M7/M9 keystroke call sites are unchanged.
+
+/** Behavioral modality (keystroke = login typing; mouse = in-session dynamics). */
+export type Modality = 'keystroke' | 'mouse';
 
 export interface BaselineMeta {
   id: string;
@@ -17,6 +24,7 @@ export interface BaselineMeta {
 
 export interface ActivateBaselineInput {
   userId: string;
+  modality: Modality;
   featureSchemaVersion: number;
   modelVersion: number;
   modelBlob: Buffer;
@@ -41,13 +49,13 @@ interface MetaRow {
 
 export function createBehavioralBaselinesRepository(db: Db) {
   return {
-    /** The user's active baseline metadata (no model blob), or null. */
-    async findActiveByUser(userId: string): Promise<BaselineMeta | null> {
+    /** The user's active baseline metadata (no model blob) for a modality, or null. */
+    async findActiveByUser(userId: string, modality: Modality = 'keystroke'): Promise<BaselineMeta | null> {
       const result = await db.query<MetaRow>(
         `SELECT id, feature_schema_version, model_version, sample_count, status
          FROM behavioral_baselines
-         WHERE user_id = $1 AND status = 'active'`,
-        [userId],
+         WHERE user_id = $1 AND modality = $2 AND status = 'active'`,
+        [userId, modality],
       );
       const row = result.rows[0];
       return row
@@ -61,8 +69,8 @@ export function createBehavioralBaselinesRepository(db: Db) {
         : null;
     },
 
-    /** The user's active encrypted model blob (M7 scoring / tests), or null. */
-    async findActiveModel(userId: string): Promise<EncryptedModel | null> {
+    /** The user's active encrypted model blob for a modality (scoring / tests), or null. */
+    async findActiveModel(userId: string, modality: Modality = 'keystroke'): Promise<EncryptedModel | null> {
       const result = await db.query<{
         model_blob_encrypted: Buffer;
         model_nonce: Buffer;
@@ -71,8 +79,8 @@ export function createBehavioralBaselinesRepository(db: Db) {
       }>(
         `SELECT model_blob_encrypted, model_nonce, feature_schema_version, model_version
          FROM behavioral_baselines
-         WHERE user_id = $1 AND status = 'active'`,
-        [userId],
+         WHERE user_id = $1 AND modality = $2 AND status = 'active'`,
+        [userId, modality],
       );
       const row = result.rows[0];
       return row
@@ -86,16 +94,17 @@ export function createBehavioralBaselinesRepository(db: Db) {
     },
 
     /**
-     * Upsert the user's baseline to ACTIVE with the freshly-fitted encrypted
-     * model. Keyed by (user_id, model_version) per the schema's unique constraint.
+     * Upsert the user's baseline to ACTIVE with the freshly-fitted encrypted model.
+     * Keyed by (user_id, modality, model_version) per the schema's unique constraint
+     * (ADR-0013), so a mouse baseline never overwrites the keystroke one.
      */
     async activate(input: ActivateBaselineInput): Promise<void> {
       await db.query(
         `INSERT INTO behavioral_baselines
-           (user_id, feature_schema_version, model_version,
+           (user_id, modality, feature_schema_version, model_version,
             model_blob_encrypted, model_nonce, sample_count, status, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'active', now())
-         ON CONFLICT (user_id, model_version) DO UPDATE SET
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', now())
+         ON CONFLICT (user_id, modality, model_version) DO UPDATE SET
            feature_schema_version = EXCLUDED.feature_schema_version,
            model_blob_encrypted   = EXCLUDED.model_blob_encrypted,
            model_nonce            = EXCLUDED.model_nonce,
@@ -104,6 +113,7 @@ export function createBehavioralBaselinesRepository(db: Db) {
            updated_at             = now()`,
         [
           input.userId,
+          input.modality,
           input.featureSchemaVersion,
           input.modelVersion,
           input.modelBlob,

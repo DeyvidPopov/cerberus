@@ -1,7 +1,10 @@
-// Enrollment service (ADR-0002, ADR-0009). The authoritative enrollment
+// Enrollment service (ADR-0002, ADR-0009, ADR-0013). The authoritative enrollment
 // lifecycle: accumulate position-indexed samples → when enough are buffered, fit
 // a baseline (mean + regularized covariance) → store it MODEL-ONLY and encrypted
-// at rest → PURGE the raw samples → mark active. NO anomaly scoring (that is M7).
+// at rest → PURGE the raw samples → mark active. NO anomaly scoring (that is the
+// scorer's job). MODALITY-AGNOSTIC: the SAME lifecycle fits the keystroke baseline
+// (M6) and the mouse baseline (M10) — it is parameterized by modality + schema, not
+// duplicated per modality (defaults keep the keystroke call sites unchanged).
 //
 // Privacy: feature vectors are biometric-adjacent. They are never logged; the
 // fitted model is encrypted before storage; the raw buffer is deleted on
@@ -14,7 +17,7 @@ import {
 import type { Pool } from 'pg';
 
 import { withTransaction } from '../repositories/pool';
-import { createBehavioralBaselinesRepository } from '../repositories/behavioral-baselines';
+import { createBehavioralBaselinesRepository, type Modality } from '../repositories/behavioral-baselines';
 import { createEnrollmentSamplesRepository } from '../repositories/enrollment-samples';
 import { BASELINE_MODEL_VERSION } from '../risk/config';
 import { fitBaseline, type FittedBaseline } from '../risk/baseline-model';
@@ -26,6 +29,12 @@ export interface EnrollmentServiceDeps {
   baselineEncryptionKey: Buffer;
   /** Samples required before the baseline activates (ADR-0002; config, no magic number). */
   minEnrollmentSamples: number;
+  /** Which behavioral modality this instance enrolls (default keystroke). */
+  modality?: Modality;
+  /** Feature-schema version this instance accepts/stamps (default keystroke schema). */
+  featureSchemaVersion?: number;
+  /** Stored model version (default the keystroke baseline model version). */
+  modelVersion?: number;
 }
 
 export type SubmitResult =
@@ -34,7 +43,7 @@ export type SubmitResult =
 
 /**
  * The fitted-model blob layout (encrypted before storage). MODEL ONLY: means +
- * covariance + the regularization metadata M7 needs. NO raw samples are present.
+ * covariance + the regularization metadata the scorer needs. NO raw samples.
  */
 interface SerializedModel {
   featureSchemaVersion: number;
@@ -47,29 +56,32 @@ interface SerializedModel {
   ridge: number;
 }
 
-function serializeModel(fitted: FittedBaseline): Buffer {
-  const model: SerializedModel = {
-    featureSchemaVersion: FEATURE_SCHEMA_VERSION,
-    modelVersion: BASELINE_MODEL_VERSION,
-    dimension: fitted.dimension,
-    sampleCount: fitted.sampleCount,
-    mean: fitted.mean,
-    covariance: fitted.covariance,
-    shrinkage: fitted.shrinkage,
-    ridge: fitted.ridge,
-  };
-  return Buffer.from(JSON.stringify(model), 'utf8');
-}
-
 export function createEnrollmentService(deps: EnrollmentServiceDeps) {
   const { pool, baselineEncryptionKey, minEnrollmentSamples } = deps;
+  const modality = deps.modality ?? 'keystroke';
+  const featureSchemaVersion = deps.featureSchemaVersion ?? FEATURE_SCHEMA_VERSION;
+  const modelVersion = deps.modelVersion ?? BASELINE_MODEL_VERSION;
+
+  function serializeModel(fitted: FittedBaseline): Buffer {
+    const model: SerializedModel = {
+      featureSchemaVersion,
+      modelVersion,
+      dimension: fitted.dimension,
+      sampleCount: fitted.sampleCount,
+      mean: fitted.mean,
+      covariance: fitted.covariance,
+      shrinkage: fitted.shrinkage,
+      ridge: fitted.ridge,
+    };
+    return Buffer.from(JSON.stringify(model), 'utf8');
+  }
 
   function activeStatus(sampleCount: number): EnrollmentStatus {
     return {
       status: 'active',
       samplesCollected: sampleCount,
       samplesRequired: minEnrollmentSamples,
-      featureSchemaVersion: FEATURE_SCHEMA_VERSION,
+      featureSchemaVersion,
     };
   }
 
@@ -78,75 +90,78 @@ export function createEnrollmentService(deps: EnrollmentServiceDeps) {
       status: 'enrolling',
       samplesCollected: collected,
       samplesRequired: minEnrollmentSamples,
-      featureSchemaVersion: FEATURE_SCHEMA_VERSION,
+      featureSchemaVersion,
     };
   }
 
   return {
     /** Enrollment progress for the user (active, or N collected of M required). */
     async getStatus(userId: string): Promise<EnrollmentStatus> {
-      const active = await createBehavioralBaselinesRepository(pool).findActiveByUser(userId);
+      const active = await createBehavioralBaselinesRepository(pool).findActiveByUser(userId, modality);
       if (active) {
         return activeStatus(active.sampleCount);
       }
-      const collected = await createEnrollmentSamplesRepository(pool).countByUser(userId);
+      const collected = await createEnrollmentSamplesRepository(pool).countByUser(userId, modality);
       return enrollingStatus(collected);
     },
 
     /**
      * Accept one enrollment sample. Once the buffer reaches the threshold, fit
      * and activate the baseline and purge the buffer — all inside one
-     * per-user-serialized transaction so the fit/store/purge is atomic and two
-     * concurrent submits cannot double-fit.
+     * per-(user,modality)-serialized transaction so the fit/store/purge is atomic
+     * and two concurrent submits cannot double-fit.
      */
     async submitSample(userId: string, input: EnrollmentSampleRequest): Promise<SubmitResult> {
-      if (input.featureSchemaVersion !== FEATURE_SCHEMA_VERSION) {
+      if (input.featureSchemaVersion !== featureSchemaVersion) {
         return { ok: false, reason: 'schema_version' };
       }
 
       return withTransaction(pool, async (tx) => {
-        // Serialize all of a user's enrollment writes against each other.
-        await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [userId]);
+        // Serialize this user's enrollment writes for THIS modality against each
+        // other (keystroke and mouse enrollment do not block one another).
+        await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${userId}:${modality}`]);
 
         const baselines = createBehavioralBaselinesRepository(tx);
         const samples = createEnrollmentSamplesRepository(tx);
 
-        const active = await baselines.findActiveByUser(userId);
+        const active = await baselines.findActiveByUser(userId, modality);
         if (active) {
           // Already enrolled — idempotent: do not buffer more raw samples.
           return { ok: true, status: activeStatus(active.sampleCount) };
         }
 
-        const pendingDim = await samples.pendingDimension(userId);
+        const pendingDim = await samples.pendingDimension(userId, modality);
         if (pendingDim !== null && pendingDim !== input.features.length) {
-          // Password length changed mid-enrollment; reject so the client resets.
+          // Vector dimension changed mid-enrollment; reject so the client resets.
           return { ok: false, reason: 'dimension_mismatch' };
         }
 
         await samples.create({
           userId,
+          modality,
           featureSchemaVersion: input.featureSchemaVersion,
           featureVector: input.features,
         });
 
-        const count = await samples.countByUser(userId);
+        const count = await samples.countByUser(userId, modality);
         if (count < minEnrollmentSamples) {
           return { ok: true, status: enrollingStatus(count) };
         }
 
         // Threshold reached: fit → encrypt → activate → purge (atomic).
-        const vectors = await samples.listVectorsByUser(userId);
+        const vectors = await samples.listVectorsByUser(userId, modality);
         const fitted = fitBaseline(vectors);
         const blob = encryptBaselineModel(serializeModel(fitted), userId, baselineEncryptionKey);
         await baselines.activate({
           userId,
-          featureSchemaVersion: FEATURE_SCHEMA_VERSION,
-          modelVersion: BASELINE_MODEL_VERSION,
+          modality,
+          featureSchemaVersion,
+          modelVersion,
           modelBlob: blob.ciphertext,
           modelNonce: blob.nonce,
           sampleCount: count,
         });
-        await samples.deleteByUser(userId); // data minimization (ADR-0002)
+        await samples.deleteByUser(userId, modality); // data minimization (ADR-0002)
 
         return { ok: true, status: activeStatus(count) };
       });

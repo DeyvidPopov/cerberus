@@ -2,6 +2,7 @@ import type { EnrollmentStatus, GrantedLoginResponse } from '@cerberus/shared-ty
 import { useState } from 'react';
 
 import { getEnrollmentStatus } from '../../lib/api';
+import { loginErrorMessage, stepUpErrorMessage } from '../../lib/auth-errors';
 import { completeStepUp, loginAccount, registerAccount } from '../../lib/auth';
 import { useKeystrokeCapture } from '../../lib/keystroke-capture';
 import { errorMessage } from '../../lib/tauri';
@@ -82,14 +83,18 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     await finishGranted(session);
   };
 
-  const run = (action: () => Promise<void>): void => {
+  // Each action supplies its own error→message mapping so every outcome renders a
+  // DISTINCT, non-leaking message (ADR-0012): login maps 401/403/429/network
+  // separately; step-up reads a 401 as a bad code; register surfaces the raw
+  // (already non-leaking) Rust/IPC error.
+  const run = (action: () => Promise<void>, mapError: (e: unknown) => string): void => {
     setError(null);
     setBusy(true);
     void action()
       .catch((e: unknown) => {
         capture.reset();
         clearSecrets();
-        setError(errorMessage(e));
+        setError(mapError(e));
       })
       .finally(() => {
         setBusy(false);
@@ -101,7 +106,11 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       setError('Passwords do not match.');
       return;
     }
-    run(mode === 'register' ? doRegister : doLogin);
+    if (mode === 'register') {
+      run(doRegister, errorMessage);
+    } else {
+      run(doLogin, loginErrorMessage);
+    }
   };
 
   const toggleMode = (): void => {
@@ -122,7 +131,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            run(doStepUp);
+            run(doStepUp, stepUpErrorMessage);
           }}
         >
           <input

@@ -54,7 +54,7 @@ base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 
 # --- Tauri runtime (optional; only with the `desktop` feature). ---
-tauri = { version = "2", optional = true }
+tauri = { version = "2", optional = true , features = [] }
 # Hard pin (permanent fix for the tauri-utils E0119): force the transitive `time`
 # to exactly 0.3.47. Not used by our code directly; enabled by `desktop` so the
 # resolver cannot drift `time` to >=0.3.48 even on `cargo update`. See ADR-0006.
@@ -62,7 +62,7 @@ time = { version = "=0.3.47", optional = true }
 
 [build-dependencies]
 # Only compiled/run with the `desktop` feature (gated in build.rs).
-tauri-build = { version = "2", optional = true }
+tauri-build = { version = "2", optional = true , features = [] }
 
 [dev-dependencies]
 # Hex decoding for published known-answer test vectors.

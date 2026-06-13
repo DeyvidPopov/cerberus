@@ -15,6 +15,7 @@ import {
   type TotpConfirmRequest,
   type TotpConfirmResponse,
   type TotpSetupResponse,
+  type TotpStatusResponse,
 } from '@cerberus/shared-types';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 
@@ -132,6 +133,16 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   );
 
   // --- TOTP enrollment (authenticated; the user already has a session) ---
+
+  router.get(
+    '/auth/totp/status',
+    deps.authenticate,
+    asyncHandler(async (_req, res) => {
+      const session = res.locals.session as SessionInfo;
+      const response: TotpStatusResponse = await deps.totpService.status(session.userId);
+      res.json(response);
+    }),
+  );
 
   router.post(
     '/auth/totp/setup',

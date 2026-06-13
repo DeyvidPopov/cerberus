@@ -11,6 +11,7 @@ import {
   DEFAULT_BEHAVIORAL_CONFIG,
   DEFAULT_COMBINER_WEIGHTS,
   DEFAULT_CONTEXTUAL_CONFIG,
+  DEFAULT_CONTINUOUS_AUTH_CONFIG,
   DEFAULT_TOTP_CONFIG,
 } from '../risk/config';
 
@@ -40,9 +41,11 @@ export function testServerConfig(overrides: Partial<ServerConfig> = {}): ServerC
       backstop: DEFAULT_BACKSTOP_CONFIG,
       totp: DEFAULT_TOTP_CONFIG,
     },
+    continuousAuth: { ...DEFAULT_CONTINUOUS_AUTH_CONFIG },
     geoipDbPath: undefined,
     // Trust proxy so tests can drive the client IP via X-Forwarded-For.
     trustProxy: true,
+    corsAllowedOrigins: ['http://localhost:1420', 'tauri://localhost'],
     ...overrides,
   };
 }

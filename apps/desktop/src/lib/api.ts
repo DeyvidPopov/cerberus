@@ -12,6 +12,7 @@ import {
   StepUpVerifyResponseSchema,
   TotpConfirmResponseSchema,
   TotpSetupResponseSchema,
+  TotpStatusResponseSchema,
   VaultItemListSchema,
   VaultItemSchema,
   VaultKeyResponseSchema,
@@ -30,6 +31,7 @@ import {
   type TotpConfirmRequest,
   type TotpConfirmResponse,
   type TotpSetupResponse,
+  type TotpStatusResponse,
   type UpdateVaultItemRequest,
   type VaultItem,
   type VaultKeyResponse,
@@ -52,6 +54,11 @@ export class ApiError extends Error {
 function baseUrl(): string {
   const fromEnv: unknown = import.meta.env.VITE_API_BASE_URL;
   return typeof fromEnv === 'string' && fromEnv.length > 0 ? fromEnv : DEFAULT_BASE_URL;
+}
+
+/** The API base URL (also the origin for the continuous-auth WebSocket). */
+export function apiBaseUrl(): string {
+  return baseUrl();
 }
 
 async function postJson<T>(path: string, body: unknown, schema: ZodType<T>): Promise<T> {
@@ -161,6 +168,10 @@ export async function getEnrollmentStatus(token: string): Promise<EnrollmentStat
 
 // --- TOTP step-up enrollment (Milestone 9). Authenticated; the secret never leaves
 // the server in plaintext beyond this setup URI shown once to the user. ---
+
+export async function getTotpStatus(token: string): Promise<TotpStatusResponse> {
+  return authed('GET', '/auth/totp/status', token, TotpStatusResponseSchema);
+}
 
 export async function setupTotp(token: string): Promise<TotpSetupResponse> {
   return authed('POST', '/auth/totp/setup', token, TotpSetupResponseSchema, {});

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Ordered, forward-only SQL migrations and the runner that applies them (PROJECT.md §5).",
   "scripts": {
-    "migrate": "tsx migrate.ts",
+    "migrate": "tsx --env-file-if-exists=../.env migrate.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

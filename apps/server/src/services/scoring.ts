@@ -9,13 +9,15 @@
 // model metadata).
 import type { Pool } from 'pg';
 
-import { createBehavioralBaselinesRepository } from '../repositories/behavioral-baselines';
+import { createBehavioralBaselinesRepository, type Modality } from '../repositories/behavioral-baselines';
 import { BaselineModelSchema, scoreSample, type BaselineModel, type SampleToScore } from '../risk/scorer';
 import { decryptBaselineModel } from './baseline-crypto';
 
 export interface ScoringServiceDeps {
   pool: Pool;
   baselineEncryptionKey: Buffer;
+  /** Which behavioral modality this scorer loads baselines for (default keystroke). */
+  modality?: Modality;
 }
 
 /** The behavioral leg of a login's risk evaluation (no DB write here). */
@@ -30,9 +32,10 @@ export interface BehavioralEvaluation {
 
 export function createScoringService(deps: ScoringServiceDeps) {
   const { pool, baselineEncryptionKey } = deps;
+  const modality = deps.modality ?? 'keystroke';
 
   async function loadActiveModel(userId: string): Promise<BaselineModel | null> {
-    const encrypted = await createBehavioralBaselinesRepository(pool).findActiveModel(userId);
+    const encrypted = await createBehavioralBaselinesRepository(pool).findActiveModel(userId, modality);
     if (!encrypted) {
       return null;
     }

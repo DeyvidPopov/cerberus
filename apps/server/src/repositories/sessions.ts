@@ -46,6 +46,20 @@ export function createSessionsRepository(db: Db) {
       return { id: row.id };
     },
 
+    /**
+     * Lock an active session (continuous-auth spike → fail closed, ADR-0013). After
+     * this the bearer token no longer authenticates (`findActiveByTokenHash` filters
+     * status='active'), so all vault ops require a fresh re-unlock. Returns whether a
+     * row transitioned (idempotent: a second lock is a no-op).
+     */
+    async markLocked(sessionId: string): Promise<boolean> {
+      const result = await db.query(
+        `UPDATE sessions SET status = 'locked' WHERE id = $1 AND status = 'active'`,
+        [sessionId],
+      );
+      return (result.rowCount ?? 0) > 0;
+    },
+
     /** Look up an active, unexpired session by its token hash. */
     async findActiveByTokenHash(tokenHash: string): Promise<SessionRecord | null> {
       const result = await db.query<SessionRow>(

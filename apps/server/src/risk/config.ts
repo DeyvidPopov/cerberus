@@ -224,6 +224,42 @@ export const DEFAULT_TOTP_CONFIG: TotpConfig = {
   challengeTtlMs: 5 * 60 * 1000,
 };
 
+// ---------------------------------------------------------------------------
+// Continuous authentication (M10 / ADR-0013): the mouse modality REUSES the
+// enrollment lifecycle + the Mahalanobis scorer; this is the in-session policy.
+// Named config (§4.4) — no magic numbers; tunable for the M11 sweeps.
+// ---------------------------------------------------------------------------
+
+/** Stored model version for a fitted MOUSE baseline (independent of keystroke). */
+export const MOUSE_BASELINE_MODEL_VERSION = 1;
+
+/**
+ * Mouse windows accumulated before the mouse baseline activates (ADR-0002
+ * lifecycle, reused). Env-overridable via MOUSE_MIN_ENROLLMENT_SAMPLES.
+ */
+export const MOUSE_MIN_ENROLLMENT_SAMPLES = 12;
+
+/**
+ * In-session continuous-auth policy. Each scored window updates an EWMA composite;
+ * crossing `spikeThreshold` LOCKS the vault (fail closed, ADR-0013). The EWMA
+ * smooths single-window noise so a lone anomalous window does not lock, while a
+ * sustained spike does. A session with NO active mouse baseline is cold-start
+ * neutral (windows buffer toward the baseline; never a spurious lock).
+ */
+export interface ContinuousAuthConfig {
+  readonly minEnrollmentSamples: number;
+  /** EWMA smoothing of the in-session composite (0..1; higher = more reactive). */
+  readonly ewmaAlpha: number;
+  /** Composite at/above which the session is locked. */
+  readonly spikeThreshold: number;
+}
+
+export const DEFAULT_CONTINUOUS_AUTH_CONFIG: ContinuousAuthConfig = {
+  minEnrollmentSamples: MOUSE_MIN_ENROLLMENT_SAMPLES,
+  ewmaAlpha: 0.5,
+  spikeThreshold: 0.85,
+};
+
 export const DEFAULT_CONTEXTUAL_CONFIG: ContextualConfig = {
   newDevice: {
     knownTrustedScore: 0,

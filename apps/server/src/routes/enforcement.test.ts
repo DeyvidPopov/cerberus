@@ -191,4 +191,34 @@ describe('TOTP enrollment (setup + confirm)', () => {
       .expect(200);
     expect(confirm.body.confirmed).toBe(true);
   });
+
+  it('GET /auth/totp/status reports whether a confirmed second factor exists (drives the M10 nudge)', async () => {
+    const acct = await registerAccount(app);
+    const token = await loginGranted(app, acct, {});
+
+    // No secret yet → not confirmed → the vault should nudge enrollment.
+    const before = await request(app)
+      .get('/auth/totp/status')
+      .set('Authorization', bearer(token))
+      .expect(200);
+    expect(before.body).toEqual({ confirmed: false });
+
+    const setup = await request(app).post('/auth/totp/setup').set('Authorization', bearer(token)).expect(200);
+    const secret = base32Decode(String(setup.body.secret));
+    await request(app)
+      .post('/auth/totp/confirm')
+      .set('Authorization', bearer(token))
+      .send({ code: currentCode(secret, Math.floor(Date.now() / 1000), DEFAULT_TOTP_CONFIG) })
+      .expect(200);
+
+    // Confirmed → the nudge stops showing.
+    const after = await request(app)
+      .get('/auth/totp/status')
+      .set('Authorization', bearer(token))
+      .expect(200);
+    expect(after.body).toEqual({ confirmed: true });
+
+    // The status endpoint requires a session.
+    await request(app).get('/auth/totp/status').expect(401);
+  });
 });

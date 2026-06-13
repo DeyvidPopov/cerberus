@@ -11,6 +11,8 @@ import { z } from 'zod';
 // Behavioral feature schema + enrollment DTOs (Milestone 6; ADR-0002, ADR-0009).
 // Re-exported here so the contract has a single import surface (@cerberus/shared-types).
 export * from './behavioral';
+// Mouse-dynamics feature schema + continuous-auth WS contract (Milestone 10; ADR-0013).
+export * from './mouse';
 // Used directly below (the login request may carry a keystroke sample, ADR-0012).
 import { EnrollmentSampleRequestSchema } from './behavioral';
 
@@ -195,6 +197,15 @@ export const TotpConfirmRequestSchema = z.object({ code: OtpCode });
 export type TotpConfirmRequest = z.infer<typeof TotpConfirmRequestSchema>;
 export const TotpConfirmResponseSchema = z.object({ confirmed: z.boolean() });
 export type TotpConfirmResponse = z.infer<typeof TotpConfirmResponseSchema>;
+
+/**
+ * GET /auth/totp/status — whether the user has a CONFIRMED second factor. Drives
+ * the post-activation enrollment nudge (Milestone 10): fail-closed step-up denies
+ * a no-TOTP user once their baseline is active, so they must be prompted to enrol.
+ * Non-secret: a single boolean, never the secret or provisioning URI.
+ */
+export const TotpStatusResponseSchema = z.object({ confirmed: z.boolean() });
+export type TotpStatusResponse = z.infer<typeof TotpStatusResponseSchema>;
 
 /** GET /auth/me — the authenticated session's identity (non-secret). */
 export const SessionInfoSchema = z.object({

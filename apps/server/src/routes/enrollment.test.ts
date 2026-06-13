@@ -194,7 +194,7 @@ describe('enrollment privacy / data-minimization (PROJECT.md §5, ADR-0002)', ()
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'enrollment_samples'`,
     );
     expect(cols.rows.map((r) => r.column_name).sort()).toEqual(
-      ['captured_at', 'feature_schema_version', 'feature_vector', 'id', 'user_id'].sort(),
+      ['captured_at', 'feature_schema_version', 'feature_vector', 'id', 'modality', 'user_id'].sort(),
     );
   });
 

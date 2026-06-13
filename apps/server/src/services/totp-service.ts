@@ -40,6 +40,12 @@ export function createTotpService(deps: TotpServiceDeps) {
   }
 
   return {
+    /** Whether the user has a CONFIRMED second factor (drives the M10 enrolment nudge). */
+    async status(userId: string): Promise<{ confirmed: boolean }> {
+      const confirmed = await createTotpSecretsRepository(pool).hasConfirmed(userId);
+      return { confirmed };
+    },
+
     /** Generate + store a new (unconfirmed) secret; return the provisioning URI. */
     async setup(userId: string): Promise<TotpSetup> {
       const secret = generateTotpSecret();
