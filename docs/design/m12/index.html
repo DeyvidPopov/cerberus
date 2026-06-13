@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- M12 Step 1 — open this file to compare the 3 unlock-screen directions side by side. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cerberus — M12 design directions (unlock screen)</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; background: #0b0e13; color: #e2e8f0; }
+      header { padding: 18px 24px; border-bottom: 1px solid #222b39; }
+      header h1 { margin: 0 0 4px; font-size: 18px; }
+      header p { margin: 0; color: #94a3b8; font-size: 13px; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #222b39; }
+      .cell { background: #0b0e13; }
+      .cell h2 { margin: 0; padding: 10px 14px; font-size: 13px; font-weight: 600; color: #cbd5e1; border-bottom: 1px solid #222b39; }
+      iframe { width: 100%; height: 620px; border: 0; display: block; }
+      @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Cerberus — Milestone 12 · unlock-screen directions</h1>
+      <p>Three aesthetic directions. Pick one (or mix); I’ll then build it across every screen with shadcn/ui + tokens.</p>
+    </header>
+    <div class="grid">
+      <div class="cell"><h2>A · “Vault” — deep slate + brass</h2><iframe src="direction-a-vault.html" title="Direction A"></iframe></div>
+      <div class="cell"><h2>B · “Clean Trust” — light + indigo</h2><iframe src="direction-b-clean-trust.html" title="Direction B"></iframe></div>
+      <div class="cell"><h2>C · “Cyber Sentinel” — near-black + cyan</h2><iframe src="direction-c-cyber-sentinel.html" title="Direction C"></iframe></div>
+    </div>
+  </body>
+</html>

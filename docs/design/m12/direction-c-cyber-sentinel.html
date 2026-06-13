@@ -1,0 +1,109 @@
+<!doctype html>
+<!-- M12 mockup — Direction C: "Cyber Sentinel" (near-black + cyan, console aesthetic). Presentation-only; not wired. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cerberus — Direction C · Cyber Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0a0e14;
+        --surface: #11161f;
+        --field: #0d1218;
+        --border: #1c2530;
+        --text: #c9d4e3;
+        --muted: #5b6b7f;
+        --cyan: #22d3ee;
+        --cyan-dim: #0e7490;
+        --danger: #fb7185;
+        --ring: rgba(34, 211, 238, 0.30);
+        --font-head: 'JetBrains Mono', ui-monospace, monospace;
+        --font-ui: 'Inter', system-ui, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh; font-family: var(--font-ui); color: var(--text);
+        background:
+          linear-gradient(transparent 0%, rgba(34,211,238,.03) 100%),
+          repeating-linear-gradient(0deg, transparent 0 23px, rgba(34,211,238,.035) 23px 24px),
+          var(--bg);
+        display: grid; place-items: center; padding: 32px;
+      }
+      .card {
+        width: 380px; background: var(--surface); border: 1px solid var(--border);
+        border-radius: 12px; padding: 30px 28px 24px; position: relative;
+        box-shadow: 0 0 0 1px rgba(34,211,238,.06), 0 24px 60px -24px #000;
+      }
+      .card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; border-radius: 12px 12px 0 0;
+        background: linear-gradient(90deg, transparent, var(--cyan), transparent); opacity: .7; }
+      .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+      .brand-l { display: flex; align-items: center; gap: 10px; }
+      .glyph { width: 30px; height: 30px; }
+      .wordmark { font-family: var(--font-head); font-weight: 700; letter-spacing: .22em; font-size: 13px;
+        color: var(--cyan); text-transform: uppercase; }
+      .status { font-family: var(--font-head); font-size: 10px; color: var(--muted); letter-spacing: .1em; }
+      .status b { color: #4ade80; }
+      h2 { font-family: var(--font-head); font-weight: 700; font-size: 19px; margin: 0 0 6px; letter-spacing: .02em; }
+      .sub { color: var(--muted); font-size: 12.5px; margin: 0 0 22px; line-height: 1.5; }
+      label { display: block; font-family: var(--font-head); font-size: 10.5px; font-weight: 500; color: var(--muted);
+        letter-spacing: .12em; text-transform: uppercase; margin: 0 0 6px; }
+      .field { margin-bottom: 15px; }
+      input {
+        width: 100%; height: 44px; padding: 0 14px; font-size: 14px; font-family: var(--font-head);
+        color: var(--text); background: var(--field); border: 1px solid var(--border);
+        border-radius: 8px; outline: none; transition: border-color .15s, box-shadow .15s;
+      }
+      input::placeholder { color: #3a4756; }
+      input:focus { border-color: var(--cyan); box-shadow: 0 0 0 4px var(--ring); }
+      .btn {
+        width: 100%; height: 46px; margin-top: 6px; font-family: var(--font-head); font-weight: 700;
+        font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: #04161a; cursor: pointer;
+        border: 0; border-radius: 8px; background: var(--cyan); box-shadow: 0 0 22px -6px var(--cyan);
+      }
+      .btn:hover { filter: brightness(1.08); }
+      .link { display: block; width: 100%; margin-top: 14px; text-align: center; background: none; border: 0;
+        color: var(--muted); font-size: 12px; cursor: pointer; font-family: var(--font-head); letter-spacing: .04em; }
+      .link:hover { color: var(--cyan); }
+      .foot { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border);
+        display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; font-family: var(--font-head); }
+      .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+      .tag { position: fixed; top: 14px; left: 16px; font-family: var(--font-head); font-size: 11px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="tag">Direction C — “Cyber Sentinel” · near-black + cyan</div>
+    <main class="card" role="main">
+      <div class="brand">
+        <div class="brand-l">
+          <svg class="glyph" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M16 3 5 8v7c0 7 4.8 11 11 13 6.2-2 11-6 11-13V8L16 3Z" fill="#0d1218" stroke="#22d3ee" stroke-width="1.4"/>
+            <path d="M11 15h3l1.5-3 2 6 1.5-3h3" stroke="#22d3ee" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="wordmark">Cerberus</span>
+        </div>
+        <span class="status">GUARD <b>● ACTIVE</b></span>
+      </div>
+      <h2>Unlock vault</h2>
+      <p class="sub">Authenticate to decrypt the vault on this device. Keystroke rhythm is analysed locally.</p>
+      <form onsubmit="return false">
+        <div class="field">
+          <label for="u">Username</label>
+          <input id="u" placeholder="you" autocomplete="username" />
+        </div>
+        <div class="field">
+          <label for="p">Master password</label>
+          <input id="p" type="password" value="••••••••••••" autocomplete="current-password" />
+        </div>
+        <button class="btn" type="submit">Authenticate</button>
+      </form>
+      <button class="link" type="button">New here? Create a vault →</button>
+      <div class="foot"><span class="dot"></span> ZERO-KNOWLEDGE · MASTER KEY NEVER LEAVES DEVICE</div>
+    </main>
+  </body>
+</html>
