@@ -5,9 +5,12 @@ This file holds DURABLE rules; it is not a changelog. Planning history lives els
 
 ## What this is
 
-A zero-knowledge password vault with risk-based adaptive authentication (keystroke behavioral
-analysis + contextual signals). Security-critical bachelor-thesis project. Correctness and the
-security invariants below take precedence over speed or convenience.
+A zero-knowledge password vault with risk-based adaptive authentication: keystroke + mouse
+behavioral analysis and contextual signals, enforced at login (adaptive grant / TOTP step-up /
+deny) and continuously in-session (mouse-dynamics spike → vault lock). Tauri + Rust desktop core,
+React + TypeScript webview (shadcn/ui + Tailwind), Node/Express + PostgreSQL server, WebSocket for
+continuous auth. Security-critical bachelor-thesis project. Correctness and the security invariants
+below take precedence over speed or convenience.
 
 ## Read these first (authoritative)
 
@@ -38,11 +41,17 @@ security invariants below take precedence over speed or convenience.
    domain-separation labels exactly; never invent a new on-wire/on-disk format.
 4. **Behavioral capture is position-indexed, never character identity.** Keystroke timing is
    captured by keystroke POSITION (hold/flight durations); the password characters never enter
-   the behavioral path. Behavioral baselines are server-side, MODEL-ONLY (mean + covariance),
-   encrypted at rest, pseudonymized; raw enrollment samples are purged on baseline activation
-   (ADR-0002). Feature vectors are biometric-adjacent: never logged beside identity, never
-   returned raw over the API.
+   the behavioral path. Mouse dynamics (continuous auth, ADR-0013) is the SECOND modality —
+   windowed motion statistics (velocity/accel/curvature/clicks/pauses), never pointer content —
+   under the SAME rules; the χ² scorer + enrollment lifecycle are modality-agnostic (reused, not
+   duplicated). All behavioral baselines are server-side, MODEL-ONLY (mean + covariance),
+   encrypted at rest, pseudonymized; raw samples are purged on activation (ADR-0002). Feature
+   vectors are biometric-adjacent: never logged beside identity, never returned raw over the API.
 5. **Fail closed.** On ambiguity in an auth/risk path, escalate or deny — never silently grant.
+6. **No risk detail in user-facing copy.** Denial / step-up / lock messages are generic ("Access
+   denied", "Additional verification needed", "Locked for your security") and NEVER reveal which
+   signal fired, the device, or the location (ADR-0012, ADR-0015). Each login outcome (granted /
+   step-up / 401 / 403 / 429 / network / 5xx server-fault) renders a DISTINCT, non-leaking message.
 
 ## Engineering rules
 
@@ -53,6 +62,15 @@ security invariants below take precedence over speed or convenience.
 - Tauri is behind the `desktop` Cargo feature; the crypto/vault core must always build and test
   WITHOUT it (hermetic, ADR-0003).
 - No magic numbers in the risk/behavioral code: thresholds/weights/sample-counts are named config.
+- Heavy crypto MUST run off the webview main thread: Tauri key-derivation commands (Argon2id ~0.5 s)
+  are `async` + `tauri::async_runtime::spawn_blocking` so the UI never freezes. Never lower the
+  Argon2id params (ADR-0001) to "fix" lag — the fix is concurrency + a visible pending state.
+- DB migrations are forward-only and ordered; the running database MUST be migrated before the new
+  code runs — a query against a not-yet-added column surfaces as a 500 (`npm run migrate`). CI/tests
+  use a real ephemeral Postgres that always applies every migration, so this only bites stale dev DBs.
+- Desktop UI is shadcn/ui + Tailwind with design tokens centralized in `apps/desktop/tailwind.config.js`
+  (ADR-0015) — no scattered inline colors. The master-password inputs stay real `<input>`s that the
+  M6 keystroke capture observes; never swap them for a component that intercepts/debounces keys.
 - `time` is pinned `=0.3.47` (ADR-0006); build CI with `--locked`. Don't bump it.
 - `cerberus-cli` is a dev/test oracle: never ship it in the production binary; it must read the
   master password from stdin/env, never argv.

@@ -1,18 +1,19 @@
 # Project Cerberus — Planning Handoff (resume in a new chat)
 
 Paste this into a new chat to resume planning/review exactly where the previous one ended.
-This is the PLANNING state (what's done, decided, next). Durable build rules live in PROJECT.md
-
-- the ADRs in the repo; this document points to them rather than repeating them.
+This is the PLANNING state (what's done, decided, next). Durable build rules live in `CLAUDE.md`
++ `PROJECT.md` + the ADRs in the repo; this document points to them rather than repeating them.
 
 ---
 
 ## What Cerberus is
 
 A zero-knowledge password vault (encrypted credential store) with a risk-based adaptive
-authentication layer driven by keystroke behavioral analysis + contextual signals. Bachelor
-thesis (FDIBA). Stack: Tauri + Rust (desktop/security core), React + TypeScript (UI),
-Node.js + Express (server), PostgreSQL, WebSocket (later, continuous auth).
+authentication layer driven by **keystroke + mouse behavioral analysis + contextual signals**.
+Enforced at login (adaptive grant / TOTP step-up / deny) and **continuously in-session** (mouse
+dynamics; a risk spike locks the vault). Bachelor thesis (FDIBA). Stack: Tauri + Rust
+(desktop/security core), React + TypeScript (UI — shadcn/ui + Tailwind), Node.js + Express
+(server), PostgreSQL, WebSocket (continuous auth).
 
 ## Working method
 
@@ -20,85 +21,96 @@ Node.js + Express (server), PostgreSQL, WebSocket (later, continuous auth).
 - One milestone per Claude Code prompt. Each prompt ends with a fixed REPORT block.
 - The human pastes the report back here; I verify it against PROJECT.md + ADRs, then issue the
   next milestone prompt (or corrections). Milestone prompts are written as docs/claude-code-\*.md.
+- Git: trunk-based per `GIT_WORKFLOW.md` — short-lived `feat/…` branch → ff-only merge into `main`
+  → push → CI green. `main` is the trunk and currently contains everything below.
 
-## Status — Phase 1 COMPLETE and CI-green on real infrastructure
+## Status — ALL milestones M1–M12 COMPLETE; CI-green; `main` is the superset
 
-- **M1 Scaffold + CI** ✅ — monorepo, hermetic Rust core job, TS job, tooling enforcing §4.
-- **M2 Rust crypto core** ✅ — ADR-0001 key hierarchy. Argon2id (224 MiB / t=3 / p=1, ~521 ms,
-  kdf_version=1), HKDF-SHA-256, XChaCha20-Poly1305. KAT vectors from RFC 9106 / RFC 5869 /
-  draft-arciszewski. Tamper→fail and wrong-key→Err proven. 32+ tests.
-- **M3 Tauri wiring + local vault CRUD** ✅ — Tauri behind a `desktop` Cargo feature (hermetic
-  core preserved); local encrypted persistence; on-disk-no-plaintext + zeroize-on-lock proven.
-- **M4 Zero-knowledge login + device enrollment** ✅ — prelogin→derive→verify handshake;
-  enumeration mitigation (deterministic dummy params); constant-time verify (static dummy hash
-  fixed a cold-start timing leak, found by an adversarial review); per-IP + per-account
-  rate-limit; device fingerprint hashed; server stores only an Argon2id hash of the auth key.
-- **M5 Encrypted blob sync** ✅ — completes Phase 1. Authenticated, user-scoped opaque-blob CRUD;
-  revision optimistic concurrency (409); cross-user denial (404, repository-enforced, no IDOR);
-  HEADLINE fresh-client E2E passes (create→push→fresh login→unwrap→pull→decrypt==original) with
-  server-blindness asserted. `cerberus-cli` test oracle added (reusable for §6 eval scripts).
-- **Build hotfix** ✅ — an upstream E0119 coherence conflict (tauri-utils 2.9.2 ↔ a too-new
-  `time`) was fixed by pinning `time = "=0.3.47"` + committing Cargo.lock. ALL THREE CI JOBS now
-  green on a real GitHub ubuntu runner (the first fully-green hosted pipeline; closed the
-  long-standing "never pushed" item).
+**Phase 1 (vault + zero-knowledge), done earlier:**
+- **M1** scaffold + hermetic CI · **M2** Rust crypto core (ADR-0001: Argon2id 224 MiB/t=3/p=1
+  ~521 ms, HKDF-SHA-256, XChaCha20-Poly1305; KAT vectors; tamper→fail, wrong-key→Err) ·
+  **M3** Tauri wiring + local vault CRUD (behind the `desktop` feature) · **M4** zero-knowledge
+  login + device enrollment (prelogin/derive/verify; enumeration mitigation; constant-time) ·
+  **M5** encrypted blob sync (opaque-blob CRUD, revision 409, no-IDOR, fresh-client E2E).
+
+**Phases 4–8 (the adaptive-auth engine — the thesis contribution):**
+- **M6** keystroke capture + enrollment lifecycle (ADR-0009) — position-indexed, model-only
+  baseline, Ledoit-Wolf + ridge covariance, raw purged on activation.
+- **M7** Mahalanobis → χ² scoring + offline detector comparison (ADR-0010) — first FAR/FRR/EER.
+- **M8** contextual signals (ADR-0011) — new-device, geovelocity, time-of-day, failure-velocity.
+- **M9** adaptive policy + TOTP step-up enforcement (ADR-0012) — combiner → bands → grant/step-up/
+  deny; replaced the M4 per-account lockout with the adaptive + per-IP-backstop model.
+- **M10** continuous auth — mouse dynamics over a session-authenticated WebSocket (ADR-0013);
+  modality-agnostic reuse of the scorer + enrollment lifecycle; spike → lock (fail closed);
+  cold-start neutral. Also: distinct login-outcome messages + TOTP enrollment nudge.
+- **M11** evaluation harness + reproducible results (ADR-0014) — Balabit mouse benchmark, the
+  band-threshold tuning (held-out, no tune-on-test), integrated-study tooling, consolidated docs.
+- **M12** UI/UX patch — the "Vault" design system (ADR-0015): shadcn/ui + Tailwind tokens; every
+  screen restyled (register/unlock/outcomes/vault/step-up/TOTP/enrollment/spike-lock); behavior
+  unchanged; keystroke capture intact; no-risk-detail copy preserved.
+- **Post-M12 fixes:** (1) Argon2id derivation moved OFF the webview main thread (Tauri commands
+  → `async` + `spawn_blocking`) so register/login no longer freeze the UI; (2) registration shows
+  distinct messages (409 username-taken etc.) instead of the raw "request failed"; (3) a 5xx
+  server fault now maps to a distinct "server problem" message instead of the generic fallback.
+
+### Headline evaluation numbers (reproducible — `npm run eval:*`, docs/evaluation/)
+
+| modality | dataset | detector (deployed) | EER (mean ± SD) |
+|----------|---------|---------------------|-----------------|
+| keystroke (login) | CMU | Mahalanobis | **13.42% ± 6.73%** (SVM 10.69%, iForest 8.89%) |
+| mouse (continuous) | Balabit | Mahalanobis | **38.18% ± 7.82%** (SVM 35.94%, iForest 34.95%) |
+
+Tuned login operating point: `stepUp 0.30 / deny 0.70` (chosen ≈0.29 at a 7% genuine
+false-step-up budget; behavioral validation EER 19.25%). Mouse is honestly noisier than keystroke
+— which is exactly why behavioral scores are soft, contributing signals closed by context + TOTP,
+and continuous auth smooths windows (EWMA) before locking.
 
 ## ADRs in the repo (docs/adr/) — these feed the thesis directly
 
-- 0001 crypto model (key hierarchy, Argon2id/HKDF/AEAD, pinned params)
-- 0002 behavioral baselines & scoring (server-side, model-only, Mahalanobis primary +
-  SVM/iforest offline comparison; CMU dataset for validation)
-- 0003 hermetic Phase-0 CI / deferred Tauri (the `desktop` feature seam)
-- 0004 repo tooling baseline
-- 0005 crypto wire format & domain separation (24-byte nonce + ct‖tag; AAD labels;
-  HKDF salt=none policy)
-- 0006 desktop app architecture (feature-gating; the time pin — marked RESOLVED)
-- 0007 zero-knowledge login handshake (prelogin/enumeration mitigation; documented low-sev limits)
-- 0008 encrypted blob sync (revision concurrency, fresh-client bootstrap, repo-level user scoping)
+- 0001 crypto model · 0002 behavioral baselines & scoring · 0003 hermetic CI / desktop feature
+- 0004 tooling baseline · 0005 crypto wire format & domain separation · 0006 desktop architecture
+- 0007 zero-knowledge login handshake · 0008 encrypted blob sync
+- 0009 behavioral feature schema, position-indexed capture & enrollment lifecycle
+- 0010 Mahalanobis→χ² scoring & offline detector comparison (Killourhy & Maxion)
+- 0011 contextual risk signals (new-device, geovelocity, time-of-day, failure-velocity)
+- 0012 adaptive policy + enforcement + TOTP step-up (combiner, bands, brute-force model)
+- 0013 continuous auth: mouse dynamics, windowed WS streaming, spike→lock (modality reuse)
+- 0014 evaluation methodology: Balabit mouse benchmark, operating-point tuning, integrated study
+- 0015 UI design system ("Vault"): shadcn/ui + Tailwind tokens, no-risk-detail copy rule
 
-## Thesis writeup
+## Local dev / ops notes (so a fresh environment works)
 
-- Phase 1 chapter drafted as a Word doc (Cerberus_Phase1.docx): problem definition → theoretical
-  solution (zero-knowledge) → practical solution → verification. Maps to the assignment structure.
-  TODO when integrating: add citations (RFC 9106, RFC 5869, Argon2 paper, OWASP) where primitives
-  are first named; demote heading levels if it's a sub-chapter; optional key-hierarchy diagram.
+- **Postgres runs on port 5433** here (role/db `cerberus`); `.env` has
+  `DATABASE_URL=postgres://cerberus:cerberus@127.0.0.1:5433/cerberus`, server + desktop on `:8080`.
+  Tests use `TEST_DATABASE_URL` on `:5433` (ephemeral DBs, always fully migrated).
+- **Run `npm run migrate` after pulling schema changes.** A stale dev DB missing a migration shows
+  up as a **500 on the affected endpoint** (this bit us: the dev DB lacked migration 0005's
+  `modality` column → every login 500'd). Forward-only; never edit an applied migration.
+- **Evaluation datasets are fetched + gitignored** under `docs/evaluation/data/` (CMU keystroke;
+  Balabit mouse — `git clone` the challenge repo). Scripts: `eval:keystroke`, `eval:mouse`,
+  `eval:tune`, `eval:integrated` (in `@cerberus/server`). Derived results ARE committed.
+- **`design/` is the M12 UI reference mockup** (gitignored, never imported/shipped).
+- Gates before merge: `cargo fmt --check` · `cargo clippy -D warnings` · `cargo test` (hermetic +
+  `--features desktop`) · `tsc --noEmit` · `eslint` · `vitest` (+ ephemeral Postgres). All green.
+- `tauri dev` builds the Rust core in DEBUG → Argon2id takes several seconds (≈0.5 s in release).
+  The UI stays responsive (derivation is off-thread now); for production-like timing use a release
+  build.
 
-## NEXT: M6 — keystroke capture + enrollment (prompt is READY: docs/claude-code-milestone-6.md)
+## NEXT / open follow-ups (non-blocking)
 
-Locked M6 design decisions (do not reopen):
-
-- Keystroke ONLY (mouse deferred to Phase 7 / continuous auth).
-- Live signal = master-password keystroke timing; CMU dataset used OFFLINE for detector validation.
-- Features = standard CMU vector (hold + down-down + up-down latencies), **position-indexed,
-  NEVER character identity** (the privacy rule; extends Phase 1 zero-knowledge into behavior).
-- Baseline server-side, model-only (mean + covariance), encrypted at rest, pseudonymized
-  (ADR-0002). ~10 samples to activate (configurable). Raw samples purged on activation.
-- M6 = capture + enrollment + baseline fit ONLY. Scoring is M7.
-
-Two things to watch when reviewing the M6 report:
-
-1. The position-indexed privacy rule genuinely holds (no character identity anywhere; password
-   path to Rust unchanged and separate; assertions prove it).
-2. Covariance regularization (shrinkage / diagonal loading) so the matrix is invertible —
-   M7's Mahalanobis needs the inverse. Expect ADR-0009.
-
-## Roadmap after M6
-
-- M7 Mahalanobis scoring + offline detector comparison (Phase 4) → first FAR/FRR/EER numbers
-- M8 Contextual signals (Phase 5) — new-device, geovelocity, time-of-day, failure-velocity
-- M9 Adaptive policy + step-up auth (Phase 6) → ADR for tuned thresholds; revisit the naive
-  per-account lockout (the M4 DoS tradeoff) once failure-velocity scoring exists
-- M10 Continuous auth over WebSocket (Phase 7) — mouse dynamics land here
-- M11 Evaluation harness + reproducible results (Phase 8)
-
-## Standing notes / loose ends (non-blocking)
-
-- GUI sync wiring (push-on-change / pull-on-unlock in the live app) is the remaining Phase-1
-  app-integration polish; the crypto+API+server chain is proven by the E2E.
-- `cerberus-cli` opsec: keep it out of the shipped binary (dev/test only); read the master
-  password from stdin/env, never argv. (Flagged; confirm done.)
-- npm audit advisories are dev-only build tooling (vite/vitest), deferred; document the rationale.
+- **Thesis writeup**: Phase-1 chapter drafted (Cerberus_Phase1.docx). Phases 4–8 (behavioral +
+  contextual + adaptive policy + continuous auth + evaluation) and the M12 UI are now ready to
+  write up; the ADRs (0009–0015) + `docs/evaluation/` numbers are the raw material.
+- **Optional integrated study (Part C, M11)**: tooling is built + unit-tested; run labeled
+  end-to-end sessions to get composite FAR/FRR + step-up / false-step-up / false-lock rates. The
+  contextual signals are only evaluable this way (stated limitation — no public benchmark).
+- **`unlock` Tauri command is still synchronous** (it re-derives the vault key under the vault
+  Mutex; not on the login path). If the local-vault unlock path becomes user-facing, convert it to
+  `async` + `spawn_blocking` like the other derivation commands (State + lock needs care).
+- **Pending-migration startup guard** (recommended): have the server log/refuse on startup if
+  `schema_migrations` is missing any migration file — the only thing that would have caught the
+  stale-dev-DB login 500 (ephemeral-DB tests can't, by design).
+- **M12 mockup features intentionally NOT built** (would be new behavior): clipboard "copy" on
+  credentials, a QR image on TOTP setup (setup key + URI shown instead), vault search/categories.
+- npm audit advisories are dev-only build tooling (vite/vitest/jsdom), deferred — documented.
 - Conflict handling is blob-level (revision 409), not field-level merge — future work (ADR-0008).
-
-```
-
-```
