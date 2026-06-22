@@ -21,7 +21,11 @@
     "migrate": "npm run migrate --workspace @cerberus/migrations",
     "dev:server": "npm run dev --workspace @cerberus/server",
     "dev:desktop": "npm run dev --workspace @cerberus/desktop",
-    "dev:app": "npm run tauri:dev --workspace @cerberus/desktop"
+    "dev:app": "npm run tauri:dev --workspace @cerberus/desktop",
+    "build:cli": "cargo build --bin cerberus-cli --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "demo:seed": "npm run demo:seed --workspace @cerberus/server",
+    "demo:reset": "npm run demo:reset --workspace @cerberus/server",
+    "demo:impostor": "npm run demo:impostor --workspace @cerberus/server"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

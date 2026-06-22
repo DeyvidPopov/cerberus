@@ -12,7 +12,10 @@
     "eval:keystroke": "tsx src/eval/run-keystroke-eval.ts",
     "eval:mouse": "tsx src/eval/run-mouse-eval.ts",
     "eval:tune": "tsx src/eval/run-threshold-tuning.ts",
-    "eval:integrated": "tsx src/eval/run-integrated-analysis.ts"
+    "eval:integrated": "tsx src/eval/run-integrated-analysis.ts",
+    "demo:seed": "tsx --env-file-if-exists=../../.env src/demo/seed.ts",
+    "demo:reset": "tsx --env-file-if-exists=../../.env src/demo/reset.ts",
+    "demo:impostor": "tsx --env-file-if-exists=../../.env src/demo/impostor.ts"
   },
   "dependencies": {
     "@cerberus/protocol": "*",

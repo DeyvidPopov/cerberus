@@ -102,6 +102,49 @@ function floatFromEnv(name: string, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+// ---------------------------------------------------------------------------
+// DEMO-ONLY config overrides (docs/DEMO.md). These knobs let a demo make the
+// behavioral baseline activate and the continuous-auth spike→lock trigger within
+// seconds. They are honored ONLY OUTSIDE production: in a production build the env
+// vars are IGNORED and the secure defaults apply, so a demo knob can never weaken a
+// shipped system. An override is logged (non-secret) so it is never silent.
+// ---------------------------------------------------------------------------
+
+/** Whether DEMO-only env overrides are honored (every non-production environment). */
+export function demoOverridesAllowed(nodeEnv: string): boolean {
+  return nodeEnv !== 'production';
+}
+
+function warnIgnoredInProd(name: string, fallback: number): void {
+  if ((process.env[name] ?? '') !== '') {
+    console.warn(`[config] ignoring DEMO-only override ${name} in production; using default ${String(fallback)}`);
+  }
+}
+
+function demoIntFromEnv(name: string, fallback: number, nodeEnv: string): number {
+  if (!demoOverridesAllowed(nodeEnv)) {
+    warnIgnoredInProd(name, fallback);
+    return fallback;
+  }
+  const value = intFromEnv(name, fallback);
+  if (value !== fallback) {
+    console.warn(`[config] DEMO-only override active (NON-PRODUCTION): ${name}=${String(value)} (default ${String(fallback)})`);
+  }
+  return value;
+}
+
+function demoFloatFromEnv(name: string, fallback: number, nodeEnv: string): number {
+  if (!demoOverridesAllowed(nodeEnv)) {
+    warnIgnoredInProd(name, fallback);
+    return fallback;
+  }
+  const value = floatFromEnv(name, fallback);
+  if (value !== fallback) {
+    console.warn(`[config] DEMO-only override active (NON-PRODUCTION): ${name}=${String(value)} (default ${String(fallback)})`);
+  }
+  return value;
+}
+
 /** Comma-separated env list (trimmed, empties dropped), or the fallback. */
 function csvFromEnv(name: string, fallback: string[]): string[] {
   const raw = process.env[name];
@@ -174,9 +217,11 @@ export function loadConfig(): ServerConfig {
     baselineEncryptionKey: loadBaselineKey(nodeEnv),
     behavioral: {
       ...DEFAULT_BEHAVIORAL_CONFIG,
-      minEnrollmentSamples: intFromEnv(
+      // DEMO-only (non-production): lower so a baseline activates after a few logins.
+      minEnrollmentSamples: demoIntFromEnv(
         'MIN_ENROLLMENT_SAMPLES',
         DEFAULT_BEHAVIORAL_CONFIG.minEnrollmentSamples,
+        nodeEnv,
       ),
     },
     contextual: {
@@ -204,14 +249,18 @@ export function loadConfig(): ServerConfig {
     },
     continuousAuth: {
       ...DEFAULT_CONTINUOUS_AUTH_CONFIG,
-      minEnrollmentSamples: intFromEnv(
+      // DEMO-only (non-production): a small window + low threshold + high EWMA make
+      // the in-session spike→lock trigger within a few seconds for a live demo.
+      minEnrollmentSamples: demoIntFromEnv(
         'MOUSE_MIN_ENROLLMENT_SAMPLES',
         DEFAULT_CONTINUOUS_AUTH_CONFIG.minEnrollmentSamples,
+        nodeEnv,
       ),
-      ewmaAlpha: floatFromEnv('CONTINUOUS_AUTH_EWMA_ALPHA', DEFAULT_CONTINUOUS_AUTH_CONFIG.ewmaAlpha),
-      spikeThreshold: floatFromEnv(
+      ewmaAlpha: demoFloatFromEnv('CONTINUOUS_AUTH_EWMA_ALPHA', DEFAULT_CONTINUOUS_AUTH_CONFIG.ewmaAlpha, nodeEnv),
+      spikeThreshold: demoFloatFromEnv(
         'CONTINUOUS_AUTH_SPIKE_THRESHOLD',
         DEFAULT_CONTINUOUS_AUTH_CONFIG.spikeThreshold,
+        nodeEnv,
       ),
     },
     geoipDbPath: process.env.GEOIP_DB_PATH,
