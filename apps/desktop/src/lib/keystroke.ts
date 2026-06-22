@@ -56,7 +56,12 @@ export class KeystrokeRecorder {
     return this.entries.length;
   }
 
-  /** Whether enough keystrokes are captured and all have been released. */
+  /**
+   * Whether enough keystrokes are captured and ALL have been released. Note this is
+   * STRICTER than `extract()`, which additionally tolerates a trailing unreleased
+   * keydown (the submit/Enter key — see `extract`). To ask "is there an extractable
+   * sample?", use `extract() !== null`, not this predicate.
+   */
   isComplete(): boolean {
     return this.entries.length >= MIN_KEYSTROKES && this.entries.every((e) => e.up !== null);
   }
@@ -64,14 +69,32 @@ export class KeystrokeRecorder {
   /**
    * Extract the position-indexed feature vector (durations only), or null if the
    * capture is incomplete (too few keys, or a key never released).
+   *
+   * A TRAILING run of never-released keydowns is dropped first. This is what makes
+   * "press Enter to log in" work: the submit key (Enter/Return) is captured as a
+   * keydown, but the form's onSubmit handler reads the sample SYNCHRONOUSLY during
+   * that keydown — before the matching keyup fires — so the Enter would otherwise
+   * leave the capture "incomplete" and discard the entire (otherwise valid)
+   * password sample, sending NO enrollment telemetry and freezing the baseline.
+   * The submit key is not a password character; dropping it also keeps the vector
+   * dimension stable (= password length) whether the user clicks or presses Enter,
+   * so consecutive samples buffer instead of being rejected as dimension changes.
+   * We never test key identity (the privacy rule, enforced by KeystrokeProbeEvent);
+   * the submit key is recognised structurally — a trailing keydown with no keyup.
    */
   extract(): number[] | null {
-    if (this.entries.length < MIN_KEYSTROKES) {
+    let end = this.entries.length;
+    while (end > 0 && this.entries[end - 1]?.up === null) {
+      end -= 1;
+    }
+    if (end < MIN_KEYSTROKES) {
       return null;
     }
     const timings: KeystrokeTiming[] = [];
-    for (const entry of this.entries) {
-      if (entry.up === null) {
+    for (let i = 0; i < end; i += 1) {
+      const entry = this.entries[i];
+      if (entry === undefined || entry.up === null) {
+        // A mid-sequence key never released — the timing is unreliable; bail.
         return null;
       }
       timings.push({ down: entry.down, up: entry.up });

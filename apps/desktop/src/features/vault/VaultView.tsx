@@ -26,6 +26,7 @@ import {
   updateCredential,
 } from '../../lib/tauri';
 import { openContinuousAuth } from '../../lib/ws';
+import { RiskInspector } from './RiskInspector';
 import { TotpEnrollment } from './TotpEnrollment';
 
 const EMPTY_INPUT: CredentialInput = {
@@ -89,6 +90,28 @@ function letterTile(name: string): string {
   return (name.trim()[0] ?? '•').toUpperCase();
 }
 
+// Shown when the vault has no encryption key held in memory (e.g. straight after
+// registration, which authenticates but does not derive the vault key). The header
+// pill already reads "Locked"; this is the calm call-to-action, not a duplicate
+// status banner — and it replaces the old behaviour where a failed credential fetch
+// surfaced a contradictory "vault is locked" ERROR beneath an "Unlocked" pill.
+function LockedVault({ onReturn }: { onReturn: () => void }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
+      <div className="flex h-[58px] w-[58px] items-center justify-center rounded-2xl border border-line2 bg-white/[0.04] text-muted2">
+        <LockIcon size={26} />
+      </div>
+      <h2 className="mt-5 font-display text-xl font-semibold tracking-[-0.01em]">Your vault is locked</h2>
+      <p className="mt-2 max-w-[340px] text-[13.5px] leading-[1.55] text-muted">
+        Log in with your master password to unlock it. Your credentials stay encrypted until then.
+      </p>
+      <Button className="mt-6" onClick={onReturn}>
+        Log in to unlock
+      </Button>
+    </div>
+  );
+}
+
 // Credential plaintext (the password) is only pulled into the webview on demand
 // — when revealing or editing a single item — and is never persisted to browser
 // storage (PROJECT.md §4.2). The list shows only id/name/username.
@@ -101,7 +124,17 @@ export function VaultView({ onLock, session }: VaultViewProps) {
   // null = unknown/not-applicable; false = needs a nudge; true = already enrolled.
   const [totpConfirmed, setTotpConfirmed] = useState<boolean | null>(null);
 
+  // THE single source of truth for the vault's lock state: whether the encryption
+  // key is held in memory (set when a granted login opened the local vault). The
+  // pill, the Add affordance, and the data fetches all read this one value, so they
+  // can never disagree. Registration authenticates but does not derive the key, so
+  // that state is honestly LOCKED.
+  const vaultUnlocked = session.vaultUnlocked;
+
   const refresh = (): void => {
+    if (!vaultUnlocked) {
+      return; // locked → no key held; never query (would only yield "vault is locked")
+    }
     void listCredentials()
       .then(setItems)
       .catch((e: unknown) => {
@@ -109,7 +142,7 @@ export function VaultView({ onLock, session }: VaultViewProps) {
       });
   };
 
-  useEffect(refresh, []);
+  useEffect(refresh, [vaultUnlocked]);
 
   // Once the typing profile is active, check whether a second factor exists; if
   // not, surface the enrollment nudge (fail-closed step-up would otherwise deny a
@@ -134,8 +167,8 @@ export function VaultView({ onLock, session }: VaultViewProps) {
   // via the M3 lock path and return to the unlock screen — re-unlock re-runs the M9
   // login risk evaluation. Capture reads only pointer geometry/timing, never content.
   useEffect(() => {
-    if (token === null) {
-      return;
+    if (token === null || !vaultUnlocked) {
+      return; // only stream/score while the vault is actually open (keys held)
     }
     let locked = false;
     const client = openContinuousAuth(token, {
@@ -158,7 +191,7 @@ export function VaultView({ onLock, session }: VaultViewProps) {
       detach();
       client.close();
     };
-  }, [token, onLock]);
+  }, [token, vaultUnlocked, onLock]);
 
   const resetForm = (): void => {
     setForm(EMPTY_INPUT);
@@ -247,16 +280,30 @@ export function VaultView({ onLock, session }: VaultViewProps) {
         <BrandMark size={26} />
         <span className="font-display text-xl font-semibold tracking-[-0.01em]">Vault</span>
         <div className="flex-1" />
-        <span className="flex items-center gap-[6px] rounded-full border border-ok/25 bg-ok/[0.08] py-[5px] pl-[9px] pr-[11px]">
-          <span className="h-[7px] w-[7px] animate-glow rounded-full bg-ok shadow-[0_0_8px_#5bbf92]" />
-          <span className="text-[11.5px] font-medium text-ok">Unlocked</span>
-        </span>
+        {vaultUnlocked ? (
+          <span className="flex items-center gap-[6px] rounded-full border border-ok/25 bg-ok/[0.08] py-[5px] pl-[9px] pr-[11px]">
+            <span className="h-[7px] w-[7px] animate-glow rounded-full bg-ok shadow-[0_0_8px_#5bbf92]" />
+            <span className="text-[11.5px] font-medium text-ok">Unlocked</span>
+          </span>
+        ) : (
+          <span className="flex items-center gap-[6px] rounded-full border border-line2 bg-white/[0.04] py-[5px] pl-[9px] pr-[11px] text-muted2">
+            <LockIcon size={12} />
+            <span className="text-[11.5px] font-medium">Locked</span>
+          </span>
+        )}
         <Button variant="icon" size="icon" onClick={doLock} title="Lock vault" aria-label="Lock vault">
           <LockIcon size={17} />
         </Button>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col">
+      {!vaultUnlocked ? (
+        <LockedVault
+          onReturn={() => {
+            onLock('manual');
+          }}
+        />
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col">
         {/* BANNERS */}
         <div className="flex flex-col gap-3 px-[18px] pt-4 empty:hidden">
           {session.enrollment !== null && <EnrollmentBanner enrollment={session.enrollment} />}
@@ -493,9 +540,13 @@ export function VaultView({ onLock, session }: VaultViewProps) {
                 </div>
               </form>
             </section>
+
+            {/* DEMONSTRATION / RESEARCH affordance — server-gated on a step-up. */}
+            {token !== null && <RiskInspector token={token} />}
           </div>
         </div>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

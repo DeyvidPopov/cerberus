@@ -126,6 +126,7 @@ export function createAuthService(deps: AuthServiceDeps) {
     userId: string,
     deviceId: string | null,
     isNewDevice: boolean,
+    stepUpConfirmed: boolean,
   ): Promise<({ kind: 'granted' } & GrantedSession)> {
     const vaultKey = await createVaultKeysRepository(pool).findByUserId(userId);
     if (!vaultKey) {
@@ -139,6 +140,7 @@ export function createAuthService(deps: AuthServiceDeps) {
       tokenHash: hashSessionToken(sessionToken),
       expiresAt,
       isNewDevice,
+      stepUpConfirmed,
     });
     return {
       kind: 'granted',
@@ -272,7 +274,8 @@ export function createAuthService(deps: AuthServiceDeps) {
         return { kind: 'step_up', challengeToken, expiresAt: expiresAt.toISOString() };
       }
       // 'granted' or 'step_up_bootstrap_grant' (newcomer without a usable second factor).
-      return issueSession(user.id, device.id, device.isNew);
+      // Neither passed a TOTP step-up, so the session is NOT step-up-confirmed.
+      return issueSession(user.id, device.id, device.isNew, false);
     },
 
     /**
@@ -303,7 +306,8 @@ export function createAuthService(deps: AuthServiceDeps) {
       if (!(await createStepUpChallengesRepository(pool).consume(challenge.id, 'passed'))) {
         return { kind: 'invalid_credentials' };
       }
-      return issueSession(challenge.userId, challenge.deviceId, challenge.isNewDevice);
+      // This session PASSED a TOTP step-up → mark it step-up-confirmed (gates /risk/events).
+      return issueSession(challenge.userId, challenge.deviceId, challenge.isNewDevice, true);
     },
   };
 }

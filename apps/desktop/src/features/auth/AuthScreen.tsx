@@ -1,5 +1,5 @@
 import type { EnrollmentStatus, GrantedLoginResponse } from '@cerberus/shared-types';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { Banner } from '../../components/ui/banner';
 import { Button } from '../../components/ui/button';
@@ -8,14 +8,21 @@ import { Input } from '../../components/ui/input';
 import { EyeIcon, EyeOffIcon, ShieldCheckIcon } from '../../components/icons';
 import { getEnrollmentStatus } from '../../lib/api';
 import { loginErrorMessage, registerErrorMessage, stepUpErrorMessage } from '../../lib/auth-errors';
-import { completeStepUp, loginAccount, registerAccount } from '../../lib/auth';
+import { completeStepUp, loginAccount, registerAccount, unlockVault } from '../../lib/auth';
 import { useKeystrokeCapture } from '../../lib/keystroke-capture';
 import { AuthFrame } from './AuthFrame';
 
-/** What a completed auth hands up: the session token and (on login) enrollment progress. */
+/**
+ * What a completed auth hands up: the session token, (on login) enrollment
+ * progress, and whether the LOCAL vault was unlocked — i.e. whether the encryption
+ * key is now held in memory. `vaultUnlocked` is the single source of truth the
+ * vault screen reads for its lock state. Registration authenticates but does NOT
+ * derive the vault key, so it hands up `vaultUnlocked: false`.
+ */
 export interface AuthenticatedSession {
   token: string | null;
   enrollment: EnrollmentStatus | null;
+  vaultUnlocked: boolean;
 }
 
 /** Why the unlock screen was shown again. 'risk' ⇒ a continuous-auth spike locked the vault. */
@@ -50,6 +57,11 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState('');
   const capture = useKeystrokeCapture();
+  // The master password needed to open the LOCAL vault once a step-up passes. Held
+  // in a ref (not rendered, survives a wrong-code retry) and wiped the instant the
+  // vault unlocks or the user abandons the step-up. The visible `password` state is
+  // cleared as soon as the step-up prompt appears.
+  const pendingUnlockPw = useRef<string | null>(null);
 
   const clearSecrets = (): void => {
     setPassword('');
@@ -57,7 +69,19 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
     setTotpCode('');
   };
 
-  const finishGranted = async (session: GrantedLoginResponse): Promise<void> => {
+  const finishGranted = async (session: GrantedLoginResponse, masterPassword: string): Promise<void> => {
+    // Access was GRANTED → open the local vault so the encryption key is held in
+    // memory (the source of truth for "Unlocked"). Do this BEFORE clearing the
+    // password. If it fails, proceed with the vault still LOCKED rather than
+    // claiming "Unlocked" (fail closed).
+    let vaultUnlocked = false;
+    try {
+      await unlockVault(masterPassword);
+      vaultUnlocked = true;
+    } catch {
+      vaultUnlocked = false;
+    }
+    pendingUnlockPw.current = null;
     let enrollment: EnrollmentStatus | null = null;
     try {
       enrollment = await getEnrollmentStatus(session.sessionToken);
@@ -66,24 +90,30 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
     }
     setChallengeToken(null);
     clearSecrets();
-    onAuthenticated({ token: session.sessionToken, enrollment });
+    onAuthenticated({ token: session.sessionToken, enrollment, vaultUnlocked });
   };
 
   const doRegister = async (): Promise<void> => {
+    // Registration authenticates but does NOT derive the vault key: the account
+    // lands LOCKED (vaultUnlocked: false). The user logs in to open the vault.
     await registerAccount(username, password);
     capture.reset();
     clearSecrets();
-    onAuthenticated({ token: null, enrollment: null });
+    onAuthenticated({ token: null, enrollment: null, vaultUnlocked: false });
   };
 
   const doLogin = async (): Promise<void> => {
     // The captured keystroke timing is sent with the login request itself.
     const features = capture.takeSample();
-    const outcome = await loginAccount(username, password, features);
+    const masterPassword = password;
+    const outcome = await loginAccount(username, masterPassword, features);
     if (outcome.kind === 'granted') {
-      await finishGranted(outcome.session);
+      await finishGranted(outcome.session, masterPassword);
     } else {
-      // Step-up required: keep the challenge and prompt for a TOTP code.
+      // Step-up required: keep the challenge and prompt for a TOTP code. Stash the
+      // password (needed to open the local vault once the step-up passes) and clear
+      // the visible field — the step-up screen shows only the code input.
+      pendingUnlockPw.current = masterPassword;
       setChallengeToken(outcome.challengeToken);
       clearSecrets();
     }
@@ -94,7 +124,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
       return;
     }
     const session = await completeStepUp({ challengeToken, code: totpCode });
-    await finishGranted(session);
+    await finishGranted(session, pendingUnlockPw.current ?? '');
   };
 
   // Each action supplies its own error→message mapping so every outcome renders a
@@ -133,6 +163,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
     setChallengeToken(null);
     setShowPw(false);
     capture.reset();
+    pendingUnlockPw.current = null;
     clearSecrets();
   };
 
@@ -220,6 +251,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
           onClick={() => {
             setChallengeToken(null);
             setError(null);
+            pendingUnlockPw.current = null;
           }}
           disabled={busy}
           className="mt-4 block w-full text-center text-[13px] text-muted2 hover:text-fg disabled:opacity-50"

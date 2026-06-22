@@ -9,6 +9,7 @@ import {
   LoginResponseSchema,
   PreloginResponseSchema,
   RegisterResponseSchema,
+  RiskEventsResponseSchema,
   StepUpVerifyResponseSchema,
   TotpConfirmResponseSchema,
   TotpSetupResponseSchema,
@@ -26,6 +27,7 @@ import {
   type PreloginResponse,
   type RegisterRequest,
   type RegisterResponse,
+  type RiskEventsResponse,
   type StepUpVerifyRequest,
   type StepUpVerifyResponse,
   type TotpConfirmRequest,
@@ -164,6 +166,25 @@ export async function submitEnrollmentSample(
 
 export async function getEnrollmentStatus(token: string): Promise<EnrollmentStatus> {
   return authed('GET', '/enrollment/status', token, EnrollmentStatusSchema);
+}
+
+// --- Read-only risk inspector (demonstration/research affordance). The server
+// gates this on a step-up-confirmed session and scopes it to the caller; a
+// non-step-up session gets a 403 (surfaced generically, no risk detail). ---
+
+export async function getRiskEvents(
+  token: string,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<RiskEventsResponse> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) {
+    params.set('limit', String(opts.limit));
+  }
+  if (opts.offset !== undefined) {
+    params.set('offset', String(opts.offset));
+  }
+  const qs = params.toString();
+  return authed('GET', `/risk/events${qs.length > 0 ? `?${qs}` : ''}`, token, RiskEventsResponseSchema);
 }
 
 // --- TOTP step-up enrollment (Milestone 9). Authenticated; the secret never leaves

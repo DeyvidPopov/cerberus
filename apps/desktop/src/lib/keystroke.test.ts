@@ -41,6 +41,70 @@ describe('KeystrokeRecorder — position-indexed timing', () => {
     expect(r.extract()).toBeNull();
   });
 
+  it('drops the trailing submit key (Enter keydown with no keyup) and still extracts', () => {
+    // Type 3 keys (all released), then press Enter to submit: the Enter keydown is
+    // recorded but its keyup has NOT fired when the synchronous submit handler reads
+    // the sample. The trailing incomplete keydown must be dropped, not discard the
+    // whole sample (the M6→demo enrollment-freeze bug).
+    const r = new KeystrokeRecorder();
+    r.recordDown(100);
+    r.recordUp(180);
+    r.recordDown(200);
+    r.recordUp(260);
+    r.recordDown(300);
+    r.recordUp(400);
+    r.recordDown(450); // Enter keydown — no keyup yet
+    // Same vector as the 3 complete keys; the trailing Enter is ignored.
+    expect(r.extract()).toEqual([80, 60, 100, 100, 100, 20, 40]);
+  });
+
+  it('yields the SAME dimension whether submitted by click or by Enter (stable enrollment dim)', () => {
+    // Click: 5 complete keys → dimension 3·5−2 = 13.
+    const click = new KeystrokeRecorder();
+    for (let i = 0; i < 5; i += 1) {
+      click.recordDown(i * 100);
+      click.recordUp(i * 100 + 50);
+    }
+    // Enter: the same 5 keys, then a trailing Enter keydown (no keyup).
+    const enter = new KeystrokeRecorder();
+    for (let i = 0; i < 5; i += 1) {
+      enter.recordDown(i * 100);
+      enter.recordUp(i * 100 + 50);
+    }
+    enter.recordDown(600); // Enter keydown
+    const clickVec = click.extract();
+    const enterVec = enter.extract();
+    expect(clickVec).not.toBeNull();
+    expect(enterVec).not.toBeNull();
+    expect(enterVec?.length).toBe(clickVec?.length);
+    expect(enterVec?.length).toBe(13);
+    // Identical samples ⇒ the server buffers both (no dimension_mismatch drop).
+    expect(enterVec).toEqual(clickVec);
+  });
+
+  it('accepts EXACTLY the minimum complete keys followed by a trailing submit key (boundary)', () => {
+    // 2 complete keys (= MIN_KEYSTROKES) + a trailing Enter keydown ⇒ a valid dim-4
+    // vector (3·2−2). Pins the lower boundary so a `<`→`<=` regression is caught.
+    const r = new KeystrokeRecorder();
+    r.recordDown(0);
+    r.recordUp(40);
+    r.recordDown(100);
+    r.recordUp(150);
+    r.recordDown(200); // Enter keydown — no keyup
+    const v = r.extract();
+    expect(v).not.toBeNull();
+    expect(v?.length).toBe(4);
+  });
+
+  it('still returns null when too few COMPLETE keys remain after dropping the trailing key', () => {
+    // One complete key + a trailing unreleased key ⇒ only 1 complete (< MIN_KEYSTROKES).
+    const r = new KeystrokeRecorder();
+    r.recordDown(0);
+    r.recordUp(50);
+    r.recordDown(100); // never released
+    expect(r.extract()).toBeNull();
+  });
+
   it('reset() discards captured timing', () => {
     const r = new KeystrokeRecorder();
     r.recordDown(0);

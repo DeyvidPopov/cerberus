@@ -215,6 +215,46 @@ export const SessionInfoSchema = z.object({
 export type SessionInfo = z.infer<typeof SessionInfoSchema>;
 
 // ---------------------------------------------------------------------------
+// Read-only risk inspector (demonstration/research affordance). GET /risk/events
+// returns the CALLER'S OWN recorded risk evaluations — per-signal sub-scores +
+// reasons, the combiner output, the band, and the action — for transparency/
+// evaluation. It is gated server-side on a step-up-confirmed session (ADR-0012)
+// and is NOT a shipped end-user feature. `signals` carries scores + structured
+// reasons ONLY — never a raw feature vector (biometric-adjacent; PROJECT.md §5).
+// ---------------------------------------------------------------------------
+
+/** Enforcement band recorded on a risk event. */
+export const PolicyBandSchema = z.enum(['grant', 'step_up', 'deny']);
+export type PolicyBand = z.infer<typeof PolicyBandSchema>;
+
+/** One recorded login/continuous-auth risk evaluation (the caller's own). */
+export const RiskEventSchema = z.object({
+  id: z.string(),
+  /** When the evaluation occurred (ISO 8601). */
+  occurredAt: z.string(),
+  /** Per-signal sub-scores + structured reasons + combiner output (no raw vectors). */
+  signals: z.record(z.string(), z.unknown()),
+  behavioralScore: z.number().nullable(),
+  contextScore: z.number().nullable(),
+  compositeScore: z.number().nullable(),
+  policyBand: PolicyBandSchema.nullable(),
+  actionTaken: z.string().nullable(),
+  outcome: z.string().nullable(),
+  geoCountry: z.string().nullable(),
+  geoRegion: z.string().nullable(),
+  ipTruncated: z.string().nullable(),
+});
+export type RiskEvent = z.infer<typeof RiskEventSchema>;
+
+/** GET /risk/events — a page of the caller's own risk events, newest first. */
+export const RiskEventsResponseSchema = z.object({
+  events: z.array(RiskEventSchema),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+});
+export type RiskEventsResponse = z.infer<typeof RiskEventsResponseSchema>;
+
+// ---------------------------------------------------------------------------
 // Encrypted blob sync (Milestone 5). ADR-0005 (wire format), ADR-0008 (sync).
 //
 // Every vault item is an OPAQUE AEAD blob (ADR-0005): the server stores and

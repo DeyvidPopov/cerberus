@@ -9,6 +9,7 @@ vi.mock('../../lib/auth', () => ({
   loginAccount: vi.fn(),
   completeStepUp: vi.fn(),
   registerAccount: vi.fn(),
+  unlockVault: vi.fn(),
 }));
 vi.mock('../../lib/api', async (importActual) => ({
   ...(await importActual<typeof import('../../lib/api')>()),
@@ -19,7 +20,7 @@ vi.mock('../../lib/keystroke-capture', () => ({
 }));
 
 import { getEnrollmentStatus, ApiError } from '../../lib/api';
-import { completeStepUp, loginAccount, registerAccount } from '../../lib/auth';
+import { completeStepUp, loginAccount, registerAccount, unlockVault } from '../../lib/auth';
 import { AuthScreen } from './AuthScreen';
 
 const onAuthenticated = vi.fn();
@@ -62,6 +63,25 @@ describe('AuthScreen — distinct login outcomes (Part A)', () => {
     await waitFor(() => {
       expect(onAuthenticated).toHaveBeenCalledWith(expect.objectContaining({ token: 'tok-1' }));
     });
+    // A granted login opens the LOCAL vault (encryption key now held) — the vault
+    // screen's single source of truth for "Unlocked".
+    expect(unlockVault).toHaveBeenCalledWith('master-pw');
+    expect(onAuthenticated).toHaveBeenCalledWith(expect.objectContaining({ vaultUnlocked: true }));
+  });
+
+  it('registration authenticates but lands LOCKED (keys not derived → vaultUnlocked: false)', async () => {
+    vi.mocked(registerAccount).mockResolvedValue();
+    render(<AuthScreen onAuthenticated={onAuthenticated} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Create a vault' }));
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'newuser' } });
+    fireEvent.change(screen.getByLabelText('Master password'), { target: { value: 'master-pw' } });
+    fireEvent.change(screen.getByLabelText('Confirm master password'), { target: { value: 'master-pw' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create vault' }));
+    await waitFor(() => {
+      expect(onAuthenticated).toHaveBeenCalledWith({ token: null, enrollment: null, vaultUnlocked: false });
+    });
+    // Registration must NOT open the local vault.
+    expect(unlockVault).not.toHaveBeenCalled();
   });
 
   it('step_up_required → shows the TOTP prompt and drives the verify flow', async () => {
@@ -91,6 +111,13 @@ describe('AuthScreen — distinct login outcomes (Part A)', () => {
       expect(completeStepUp).toHaveBeenCalledWith({ challengeToken: 'chal-1', code: '123456' });
       expect(onAuthenticated).toHaveBeenCalledWith(expect.objectContaining({ token: 'tok-stepup' }));
     });
+    // The local vault is opened with the master password STASHED before the step-up
+    // (the visible field was cleared when the prompt appeared), so the post-step-up
+    // session is honestly Unlocked — not left locked or unlocked with an empty key.
+    expect(unlockVault).toHaveBeenCalledWith('master-pw');
+    expect(onAuthenticated).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'tok-stepup', vaultUnlocked: true }),
+    );
   });
 
   it('401 → "Incorrect username or master password"', async () => {

@@ -16,6 +16,8 @@ export interface AuthenticatedSession {
   createdAt: Date;
   /** Whether the device was new at this login (authoritative for new-device). */
   isNewDevice: boolean;
+  /** Whether this session passed a step-up (TOTP) this session (gates the risk inspector). */
+  stepUpConfirmed: boolean;
 }
 
 // Session-auth middleware (the `auth` slot in the §4.3 chain). Verifies the
@@ -55,7 +57,25 @@ async function verify(
     deviceId: session.deviceId,
     createdAt: session.createdAt,
     isNewDevice: session.isNewDevice,
+    stepUpConfirmed: session.stepUpConfirmed,
   };
   res.locals.session = authenticated;
+  next();
+}
+
+/**
+ * Gate a route on a session that PASSED a step-up (TOTP) THIS session. Runs AFTER
+ * `authenticate` (which populates res.locals.session). Used by the read-only risk
+ * inspector (GET /risk/events), a demonstration/research affordance that must be
+ * reachable only after an actual step-up — enforced here on the SERVER, never by
+ * hiding a button. Fails closed: a missing or non-step-up session → 403. The body
+ * is generic and leaks no risk detail (PROJECT.md §1; ADR-0012 copy unchanged).
+ */
+export function requireStepUpConfirmed(_req: Request, res: Response, next: NextFunction): void {
+  const session = res.locals.session as AuthenticatedSession | undefined;
+  if (!session || !session.stepUpConfirmed) {
+    res.status(403).json({ error: 'step_up_required' });
+    return;
+  }
   next();
 }

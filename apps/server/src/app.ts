@@ -2,7 +2,7 @@ import express, { type Express } from 'express';
 import type { Pool } from 'pg';
 
 import type { ServerConfig } from './config';
-import { createAuthenticate } from './middleware/authenticate';
+import { createAuthenticate, requireStepUpConfirmed } from './middleware/authenticate';
 import { cors } from './middleware/cors';
 import { errorHandler } from './middleware/error-handler';
 import { notFound } from './middleware/not-found';
@@ -12,12 +12,14 @@ import { createSessionsRepository } from './repositories/sessions';
 import { routes } from './routes';
 import { createAuthRouter } from './routes/auth';
 import { createEnrollmentRouter } from './routes/enrollment';
+import { createRiskRouter } from './routes/risk';
 import { createVaultRouter } from './routes/vault';
 import { createAuthService } from './services/auth';
 import { createEnrollmentService } from './services/enrollment';
 import { NO_GEO_LOOKUP, type GeoLookup } from './services/geoip';
 import { RateLimiter } from './services/rate-limiter';
 import { createRiskDecisionService } from './services/risk-decision';
+import { createRiskInspectorService } from './services/risk-inspector';
 import { createScoringService } from './services/scoring';
 import { createTotpService } from './services/totp-service';
 import { createVaultService } from './services/vault';
@@ -53,6 +55,7 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
     config.rateLimit.vaultWindowMs,
     config.rateLimit.vaultMaxRequests,
   );
+  const riskLimiter = new RateLimiter(config.rateLimit.vaultWindowMs, config.rateLimit.vaultMaxRequests);
 
   const geoLookup = deps.geoLookup ?? NO_GEO_LOOKUP;
   const scoringService = createScoringService({
@@ -87,6 +90,7 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
     totp: totpService,
   });
   const vaultService = createVaultService({ pool });
+  const riskInspectorService = createRiskInspectorService({ pool });
   const sessions = createSessionsRepository(pool);
   const authenticate = createAuthenticate(sessions);
 
@@ -111,6 +115,14 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
       enrollmentService,
       authenticate,
       rateLimit: rateLimitByUser(enrollmentLimiter),
+    }),
+  );
+  app.use(
+    createRiskRouter({
+      riskInspector: riskInspectorService,
+      authenticate,
+      requireStepUp: requireStepUpConfirmed,
+      rateLimit: rateLimitByUser(riskLimiter),
     }),
   );
 

@@ -160,6 +160,25 @@ export function createRiskEventsRepository(db: Db) {
       );
       return result.rows.map(toRecord);
     },
+
+    /**
+     * A page of the user's risk events, newest first (scoped to user_id — defense
+     * against IDOR). `limit`/`offset` are caller-bounded by the route; the ORDER BY
+     * is stable on occurred_at so pages don't overlap/skip across requests.
+     */
+    async listByUserPaged(userId: string, limit: number, offset: number): Promise<RiskEventRecord[]> {
+      const result = await db.query<RiskEventRow>(
+        `SELECT id, user_id, device_id, signals, behavioral_score, composite_score,
+                context_score, policy_band, action_taken, geo_country, geo_region,
+                ip_truncated, outcome, occurred_at
+         FROM risk_events
+         WHERE user_id = $1
+         ORDER BY occurred_at DESC, id DESC
+         LIMIT $2 OFFSET $3`,
+        [userId, limit, offset],
+      );
+      return result.rows.map(toRecord);
+    },
   };
 }
 

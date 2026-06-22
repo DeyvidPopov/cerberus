@@ -9,7 +9,7 @@ import {
 
 import { login, prelogin, register, verifyStepUp } from './api';
 import { deviceFingerprintHash } from './device';
-import { deriveLoginAuthKey, prepareRegistration } from './tauri';
+import { deriveLoginAuthKey, prepareRegistration, unlock } from './tauri';
 
 /**
  * The outcome of a login: a granted session, or a step-up challenge that must be
@@ -61,4 +61,16 @@ export async function loginAccount(
 /** Complete a step-up with a TOTP code, returning the now-granted session. */
 export async function completeStepUp(req: StepUpVerifyRequest): Promise<GrantedLoginResponse> {
   return verifyStepUp(req);
+}
+
+/**
+ * Open the LOCAL Rust vault so the in-memory encryption key is held and the vault
+ * becomes usable (list/add/reveal). Call this only AFTER the server has GRANTED
+ * access (direct grant, or after a passed step-up) — a denied/step-up-pending login
+ * must never open the local vault (fail closed, ADR-0012). The master password is
+ * forwarded to the Rust core, which derives + unwraps the vault key; it never
+ * reaches the server (PROJECT.md §1, §4.2). On first run this initializes the vault.
+ */
+export async function unlockVault(masterPassword: string): Promise<void> {
+  await unlock(masterPassword);
 }
