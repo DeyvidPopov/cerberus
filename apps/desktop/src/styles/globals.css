@@ -15,6 +15,12 @@
   body {
     @apply bg-canvas text-fg font-sans antialiased;
   }
+  /* Hide the WebView2/Edge NATIVE password-reveal + clear glyphs: every password
+     input already has the app's own show/hide eye, so the native one is a duplicate. */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
   ::selection {
     background: rgba(232, 162, 74, 0.3);
   }
@@ -29,11 +35,10 @@
   /* Full-window canvas: layered radial gradients + faint dot grid + brass glow. */
   .app-canvas {
     position: relative;
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
+    flex-direction: column;
+    overflow: hidden;
     background: radial-gradient(120% 90% at 72% 8%, #16181e 0%, #0b0c0f 52%, #070809 100%);
   }
   .app-canvas::before {

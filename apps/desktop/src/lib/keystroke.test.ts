@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   KeystrokeRecorder,
   attachKeystrokeCapture,
+  type InputProbeEvent,
   type KeystrokeCaptureTarget,
   type KeystrokeProbeEvent,
 } from './keystroke';
+
+type AnyProbe = KeystrokeProbeEvent & InputProbeEvent;
 
 describe('KeystrokeRecorder — position-indexed timing', () => {
   it('extracts the correct vector from down/up events', () => {
@@ -129,33 +132,37 @@ describe('KeystrokeRecorder — position-indexed timing', () => {
 });
 
 // A fake event target that lets us drive the capture handlers directly and feed
-// adversarial events.
+// adversarial events (keydown/keyup AND input).
 class FakeInput implements KeystrokeCaptureTarget {
-  private handlers = new Map<string, ((event: KeystrokeProbeEvent) => void)[]>();
+  private handlers = new Map<string, ((event: AnyProbe) => void)[]>();
 
-  addEventListener(type: 'keydown' | 'keyup', listener: (event: KeystrokeProbeEvent) => void): void {
+  addEventListener(type: 'keydown' | 'keyup' | 'input', listener: (event: never) => void): void {
     const list = this.handlers.get(type) ?? [];
-    list.push(listener);
+    list.push(listener as (event: AnyProbe) => void);
     this.handlers.set(type, list);
   }
 
-  removeEventListener(
-    type: 'keydown' | 'keyup',
-    listener: (event: KeystrokeProbeEvent) => void,
-  ): void {
+  removeEventListener(type: 'keydown' | 'keyup' | 'input', listener: (event: never) => void): void {
     const list = this.handlers.get(type);
     if (list) {
       this.handlers.set(
         type,
-        list.filter((h) => h !== listener),
+        list.filter((h) => h !== (listener as (event: AnyProbe) => void)),
       );
     }
   }
 
-  dispatch(type: 'keydown' | 'keyup', event: KeystrokeProbeEvent): void {
+  dispatch(type: 'keydown' | 'keyup' | 'input', event: AnyProbe): void {
     for (const handler of this.handlers.get(type) ?? []) {
       handler(event);
     }
+  }
+
+  /** Type one character: keydown → input(insertText) → keyup. */
+  char(): void {
+    this.dispatch('keydown', { repeat: false });
+    this.dispatch('input', { inputType: 'insertText' });
+    this.dispatch('keyup', { repeat: false });
   }
 
   listenerCount(): number {
@@ -168,22 +175,57 @@ class FakeInput implements KeystrokeCaptureTarget {
 }
 
 describe('attachKeystrokeCapture — DOM wiring', () => {
-  it('feeds timestamps from a monotonic clock into the recorder', () => {
+  it('records one keystroke per committed character (input-gated) with monotonic timestamps', () => {
     const input = new FakeInput();
     const recorder = new KeystrokeRecorder();
-    const clock = [100, 180, 200, 260];
+    const clock = [100, 180, 200, 260]; // consumed at keydown + keyup only (not input)
     let i = 0;
     const detach = attachKeystrokeCapture(input, recorder, () => clock[i++] ?? 0);
 
-    input.dispatch('keydown', { repeat: false });
-    input.dispatch('keyup', { repeat: false });
-    input.dispatch('keydown', { repeat: false });
-    input.dispatch('keyup', { repeat: false });
+    input.char(); // down 100, input, up 180
+    input.char(); // down 200, input, up 260
 
     // holds 80/60 ; DD 200-100=100 ; UD 200-180=20
     expect(recorder.extract()).toEqual([80, 60, 100, 20]);
     detach();
     expect(input.listenerCount()).toBe(0);
+  });
+
+  it('EXCLUDES modifier keydowns (Shift) — only committed characters count, dimension stable', () => {
+    const input = new FakeInput();
+    const recorder = new KeystrokeRecorder();
+    attachKeystrokeCapture(input, recorder, () => 1);
+
+    // Shift+S then a: Shift down, S down, input(S), S up, Shift up, a down, input(a), a up.
+    input.dispatch('keydown', { repeat: false }); // Shift down (no input follows it)
+    input.dispatch('keydown', { repeat: false }); // S down
+    input.dispatch('input', { inputType: 'insertText' }); // S committed
+    input.dispatch('keyup', { repeat: false });
+    input.dispatch('keyup', { repeat: false }); // Shift up (stray)
+    input.char(); // a
+
+    expect(recorder.length).toBe(2); // S + a — Shift excluded
+  });
+
+  it('TAINTS the sample on a paste (insertFromPaste) → extract returns null', () => {
+    const input = new FakeInput();
+    const recorder = new KeystrokeRecorder();
+    attachKeystrokeCapture(input, recorder, () => 1);
+    input.char();
+    input.char();
+    input.dispatch('keydown', { repeat: false });
+    input.dispatch('input', { inputType: 'insertFromPaste' }); // pasted the rest
+    expect(recorder.extract()).toBeNull();
+  });
+
+  it('TAINTS the sample on a correction (deleteContentBackward) → extract returns null', () => {
+    const input = new FakeInput();
+    const recorder = new KeystrokeRecorder();
+    attachKeystrokeCapture(input, recorder, () => 1);
+    input.char();
+    input.char();
+    input.dispatch('input', { inputType: 'deleteContentBackward' }); // backspace
+    expect(recorder.extract()).toBeNull();
   });
 
   it('ignores auto-repeat keydowns', () => {
@@ -194,21 +236,21 @@ describe('attachKeystrokeCapture — DOM wiring', () => {
 
     input.dispatch('keydown', { repeat: false });
     input.dispatch('keydown', { repeat: true }); // auto-repeat: must be dropped
+    input.dispatch('input', { inputType: 'insertText' });
     input.dispatch('keyup', { repeat: false });
-    input.dispatch('keydown', { repeat: false });
-    input.dispatch('keyup', { repeat: false });
+    input.char();
 
     expect(recorder.length).toBe(2); // not 3
   });
 
-  it('PRIVACY: the handler never reads character identity (proven by a throwing getter)', () => {
+  it('PRIVACY: the handler never reads character identity (key/code/keyCode/data throw if touched)', () => {
     const input = new FakeInput();
     const recorder = new KeystrokeRecorder();
     attachKeystrokeCapture(input, recorder, () => 1);
 
-    // An event whose key/code/keyCode getters THROW if accessed. The capture must
-    // not touch them — if it did, dispatch would throw.
-    const trap = {
+    // keydown/keyup whose key/code/keyCode getters THROW, and an input whose `data` getter
+    // THROWS — the capture must read only `repeat` and `inputType`, never identity/content.
+    const keyTrap = {
       repeat: false,
       get key(): string {
         throw new Error('key identity was accessed — PRIVACY VIOLATION');
@@ -219,14 +261,22 @@ describe('attachKeystrokeCapture — DOM wiring', () => {
       get keyCode(): number {
         throw new Error('keyCode identity was accessed — PRIVACY VIOLATION');
       },
-    } as unknown as KeystrokeProbeEvent;
+    } as unknown as AnyProbe;
+    const inputTrap = {
+      inputType: 'insertText',
+      get data(): string {
+        throw new Error('typed character was accessed — PRIVACY VIOLATION');
+      },
+    } as unknown as AnyProbe;
 
     expect(() => {
-      input.dispatch('keydown', trap);
-      input.dispatch('keyup', trap);
-      input.dispatch('keydown', trap);
-      input.dispatch('keyup', trap);
+      input.dispatch('keydown', keyTrap);
+      input.dispatch('input', inputTrap);
+      input.dispatch('keyup', keyTrap);
+      input.dispatch('keydown', keyTrap);
+      input.dispatch('input', inputTrap);
+      input.dispatch('keyup', keyTrap);
     }).not.toThrow();
-    expect(recorder.length).toBe(2); // timing still captured, identity untouched
+    expect(recorder.length).toBe(2); // timing still captured, identity/content untouched
   });
 });

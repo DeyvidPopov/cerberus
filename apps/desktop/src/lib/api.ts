@@ -10,6 +10,7 @@ import {
   PreloginResponseSchema,
   RegisterResponseSchema,
   RiskEventsResponseSchema,
+  StepUpElevateResponseSchema,
   StepUpVerifyResponseSchema,
   TotpConfirmResponseSchema,
   TotpSetupResponseSchema,
@@ -28,6 +29,7 @@ import {
   type RegisterRequest,
   type RegisterResponse,
   type RiskEventsResponse,
+  type StepUpElevateResponse,
   type StepUpVerifyRequest,
   type StepUpVerifyResponse,
   type TotpConfirmRequest,
@@ -47,6 +49,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Best-effort parsed error body (e.g. the demo deny breakdown on a 403). */
+    readonly detail?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -70,7 +74,15 @@ async function postJson<T>(path: string, body: unknown, schema: ZodType<T>): Pro
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new ApiError(response.status, `request to ${path} failed`);
+    // Capture the error body best-effort so callers can read it (e.g. the demo deny
+    // breakdown on a 403). The PRIMARY, user-facing message stays generic regardless.
+    let detail: unknown;
+    try {
+      detail = await response.json();
+    } catch {
+      detail = undefined;
+    }
+    throw new ApiError(response.status, `request to ${path} failed`, detail);
   }
   const json: unknown = await response.json();
   return schema.parse(json);
@@ -168,6 +180,11 @@ export async function getEnrollmentStatus(token: string): Promise<EnrollmentStat
   return authed('GET', '/enrollment/status', token, EnrollmentStatusSchema);
 }
 
+/** Discard buffered enrollment samples and start the typing-rhythm capture over. */
+export async function resetEnrollment(token: string): Promise<EnrollmentStatus> {
+  return authed('POST', '/enrollment/reset', token, EnrollmentStatusSchema, {});
+}
+
 // --- Read-only risk inspector (demonstration/research affordance). The server
 // gates this on a step-up-confirmed session and scopes it to the caller; a
 // non-step-up session gets a 403 (surfaced generically, no risk detail). ---
@@ -185,6 +202,16 @@ export async function getRiskEvents(
   }
   const qs = params.toString();
   return authed('GET', `/risk/events${qs.length > 0 ? `?${qs}` : ''}`, token, RiskEventsResponseSchema);
+}
+
+/**
+ * POST /auth/step-up/elevate — voluntarily confirm a step-up on the CURRENT session by
+ * proving the TOTP second factor, elevating a granted login to step-up-confirmed in
+ * place (no new token). Unlocks the gated risk inspector. A wrong/expired code throws
+ * an ApiError(401); the session stays un-elevated (fail closed).
+ */
+export async function elevateStepUp(token: string, code: string): Promise<StepUpElevateResponse> {
+  return authed('POST', '/auth/step-up/elevate', token, StepUpElevateResponseSchema, { code });
 }
 
 // --- TOTP step-up enrollment (Milestone 9). Authenticated; the secret never leaves

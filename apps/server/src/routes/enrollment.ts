@@ -56,5 +56,16 @@ export function createEnrollmentRouter(deps: EnrollmentRouterDeps): Router {
     }),
   );
 
+  // Start over: discard the user's buffered samples (e.g. they pasted / mistyped during
+  // onboarding) and return a fresh "enrolling" status. Own-user only; never touches an
+  // already-active baseline.
+  router.post(
+    '/enrollment/reset',
+    asyncHandler(async (_req, res) => {
+      const status: EnrollmentStatus = await deps.enrollmentService.reset(sessionUserId(res));
+      res.json(status);
+    }),
+  );
+
   return router;
 }

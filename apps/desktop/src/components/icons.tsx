@@ -2,6 +2,8 @@
 // we hand-author a tiny set rather than pull an icon dependency. Presentation only.
 import type { SVGProps } from 'react';
 
+import logoUrl from '../assets/logo.png';
+
 type IconProps = SVGProps<SVGSVGElement> & { size?: number };
 
 function Svg({ size = 18, children, ...props }: IconProps & { children: React.ReactNode }) {
@@ -91,18 +93,78 @@ export const AlertIcon = (p: IconProps) => (
   </Svg>
 );
 
-/** The Cerberus guardian mark — a shield + keyhole, brass on dark. */
+export const SearchIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </Svg>
+);
+
+export const StarIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 9.7l5.4-.8L12 4Z" />
+  </Svg>
+);
+
+export const StarFilledIcon = (p: IconProps) => (
+  <Svg {...p} fill="currentColor">
+    <path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 9.7l5.4-.8L12 4Z" />
+  </Svg>
+);
+
+export const KeyIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="8" cy="14" r="4" />
+    <path d="m11 11 9-9M17 5l2 2M14 8l2 2" />
+  </Svg>
+);
+
+export const CreditCardIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="5" width="18" height="14" rx="2.5" />
+    <path d="M3 10h18M7 15h3" />
+  </Svg>
+);
+
+export const NoteIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 3h10l4 4v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
+    <path d="M14 3v5h5M8 13h8M8 17h6" />
+  </Svg>
+);
+
+export const ExternalLinkIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14 5h5v5M19 5l-8 8M18 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h4" />
+  </Svg>
+);
+
+export const MoreIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+  </Svg>
+);
+
+export const HelpIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9.5 9.5a2.5 2.5 0 0 1 4.5 1.5c0 1.5-2 2-2 3M12 17h.01" />
+  </Svg>
+);
+
+/** The Cerberus guardian mark — the three-headed hound logo (design/logo.png). The
+ *  source is a dark-on-black raster, so it sits cleanly on the app's dark surfaces;
+ *  corners are rounded so it never reads as a hard square tile. */
 export function BrandMark({ size = 30 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <path
-        d="M16 2.5 4 7v7.5c0 7.7 5.3 12 12 14.5 6.7-2.5 12-6.8 12-14.5V7L16 2.5Z"
-        fill="#1b1d24"
-        stroke="#e8a24a"
-        strokeWidth="1.5"
-      />
-      <circle cx="16" cy="14" r="3.2" stroke="#e8a24a" strokeWidth="1.6" />
-      <path d="M16 17v4.4" stroke="#e8a24a" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
+    <img
+      src={logoUrl}
+      width={size}
+      height={size}
+      alt="Cerberus"
+      style={{ display: 'block', flex: 'none', borderRadius: Math.round(size * 0.22) }}
+    />
   );
 }

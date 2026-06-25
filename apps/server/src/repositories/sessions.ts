@@ -72,6 +72,20 @@ export function createSessionsRepository(db: Db) {
       return (result.rowCount ?? 0) > 0;
     },
 
+    /**
+     * Mark an active session as step-up-confirmed IN PLACE (a voluntary TOTP step-up
+     * after a granted login — ADR-0012). Gates /risk/events + the live score stream.
+     * Only touches an 'active' session (a locked/expired one cannot be elevated);
+     * returns whether a row transitioned (idempotent).
+     */
+    async markStepUpConfirmed(sessionId: string): Promise<boolean> {
+      const result = await db.query(
+        `UPDATE sessions SET step_up_confirmed = TRUE WHERE id = $1 AND status = 'active'`,
+        [sessionId],
+      );
+      return (result.rowCount ?? 0) > 0;
+    },
+
     /** Look up an active, unexpired session by its token hash. */
     async findActiveByTokenHash(tokenHash: string): Promise<SessionRecord | null> {
       const result = await db.query<SessionRow>(

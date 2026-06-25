@@ -18,7 +18,7 @@ import { combine, type ContextualSubScores } from '../risk/combiner';
 import type { BackstopConfig, BandThresholds, CombinerWeights, ContextualConfig } from '../risk/config';
 import { atLeast, bandFor, escalate, type PolicyBand } from '../risk/policy';
 import { createContextualRiskService } from './contextual-risk';
-import type { GeoLookup } from './geoip';
+import type { CoarseGeo, GeoLookup } from './geoip';
 
 /** The behavioral leg already determined by the login flow (scored / cold-start / fail-closed). */
 export interface BehavioralInput {
@@ -35,6 +35,8 @@ export interface RiskDecisionInput {
   /** Login time (also the time-of-day history cutoff). */
   now: Date;
   ip: string | null;
+  /** DEMO-ONLY (non-production): coarse geo to use instead of the IP lookup. */
+  geoOverride?: CoarseGeo | null;
   behavioral: BehavioralInput;
   /** Does the user have a CONFIRMED TOTP secret (a usable second factor)? */
   hasConfirmedTotp: boolean;
@@ -86,6 +88,7 @@ export function createRiskDecisionService(deps: RiskDecisionServiceDeps) {
         isNewDevice: input.isNewDevice,
         sessionCreatedAt: input.now,
         ip: input.ip,
+        geoOverride: input.geoOverride ?? null,
         now: input.now,
       });
 

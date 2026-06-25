@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./tauri', () => ({
   prepareRegistration: vi.fn(),
   deriveLoginAuthKey: vi.fn(),
+  unlock: vi.fn(),
 }));
 vi.mock('./api', () => ({
   register: vi.fn(),
@@ -13,11 +14,15 @@ vi.mock('./api', () => ({
 vi.mock('./device', () => ({
   deviceFingerprintHash: vi.fn(),
 }));
+vi.mock('./sync', () => ({
+  syncPullOnUnlock: vi.fn(),
+}));
 
 import { login, prelogin, register } from './api';
-import { registerAccount, loginAccount } from './auth';
+import { loginAccount, registerAccount, unlockAndPull } from './auth';
 import { deviceFingerprintHash } from './device';
-import { deriveLoginAuthKey, prepareRegistration } from './tauri';
+import { syncPullOnUnlock } from './sync';
+import { deriveLoginAuthKey, prepareRegistration, unlock } from './tauri';
 
 const material = {
   authKey: 'AUTHKEY',
@@ -102,5 +107,51 @@ describe('loginAccount', () => {
     if (res.kind === 'step_up') {
       expect(res.challengeToken).toBe('challenge-1');
     }
+    // The prelogin KDF salt/params are threaded out so the caller can pull-sync.
+    expect(res.kdfSalt).toBe('SALT');
+    expect(res.kdfParams).toEqual({ memoryKib: 1, iterations: 1, parallelism: 1 });
+  });
+});
+
+describe('unlockAndPull', () => {
+  const session = {
+    status: 'granted',
+    sessionToken: 'tok',
+    expiresAt: '2026-01-01T00:00:00.000Z',
+    wrappedVaultKey: 'WK',
+    wrappedVaultKeyNonce: 'WN',
+    device: { isNew: false },
+  } as const;
+  const kdf = { memoryKib: 1, iterations: 1, parallelism: 1 };
+
+  it('opens the local vault then pull-syncs from the server', async () => {
+    vi.mocked(unlock).mockResolvedValue();
+    vi.mocked(syncPullOnUnlock).mockResolvedValue({ added: 2, updated: 0, kept: 0, skipped: 0 });
+
+    const outcome = await unlockAndPull('master-pw', session, 'SALT', kdf, 'alice');
+
+    expect(unlock).toHaveBeenCalledWith('master-pw', 'alice');
+    expect(syncPullOnUnlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'tok',
+        masterPassword: 'master-pw',
+        kdfSalt: 'SALT',
+        wrappedVaultKey: 'WK',
+        wrappedVaultKeyNonce: 'WN',
+      }),
+    );
+    expect(outcome).toEqual({ added: 2, updated: 0, kept: 0, skipped: 0 });
+  });
+
+  it('keeps the vault open (best-effort) if the pull fails — returns null, does not throw', async () => {
+    vi.mocked(unlock).mockResolvedValue();
+    vi.mocked(syncPullOnUnlock).mockRejectedValue(new Error('offline'));
+    await expect(unlockAndPull('master-pw', session, 'SALT', kdf, 'alice')).resolves.toBeNull();
+  });
+
+  it('propagates an unlock failure (the vault stays locked; no pull attempted)', async () => {
+    vi.mocked(unlock).mockRejectedValue(new Error('wrong password'));
+    await expect(unlockAndPull('master-pw', session, 'SALT', kdf, 'alice')).rejects.toThrow();
+    expect(syncPullOnUnlock).not.toHaveBeenCalled();
   });
 });

@@ -15,3 +15,13 @@ unsafe_code = "deny"          # No `unsafe` without a SAFETY comment + ADR (none
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+
+# Dev/test builds optimize DEPENDENCIES (notably argon2 + its BLAKE2b backend) so the
+# CPU-bound Argon2id derivation runs at near-release speed under `tauri dev` (~0.5 s
+# instead of several seconds in an unoptimized debug build). Our own crates stay at
+# opt-level 0 for fast incremental rebuilds and debuggability. This changes only HOW
+# the same code is compiled — the Argon2id parameters (ADR-0001: 224 MiB / t=3 / p=1)
+# are UNCHANGED, and the release profile is unaffected. (First build is a little
+# slower as deps compile optimized; cached thereafter.)
+[profile.dev.package."*"]
+opt-level = 3

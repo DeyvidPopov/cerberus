@@ -12,7 +12,7 @@ const TRUST_TAGS = ['Zero-knowledge', 'Adaptive trust', 'End-to-end encrypted'];
 
 export function AuthFrame({ children }: { children: ReactNode }) {
   return (
-    <main className="surface-card relative flex w-[min(1080px,94vw)] h-[min(720px,90vh)] overflow-hidden rounded-2xl border border-line shadow-card animate-fadeUp">
+    <main className="surface-card relative flex min-h-0 w-full flex-1 overflow-hidden animate-fadeUp">
       {/* BRAND PANEL */}
       <aside className="surface-panel relative hidden w-[44%] min-w-[380px] flex-col justify-between overflow-hidden border-r border-line2 p-[42px] lg:flex">
         <div className="pointer-events-none absolute -right-40 -top-28 h-[420px] w-[420px] rounded-full bg-accent/[0.16] blur-lg" />
@@ -50,7 +50,7 @@ export function AuthFrame({ children }: { children: ReactNode }) {
       </aside>
 
       {/* CONTENT PANEL */}
-      <section className="relative flex flex-1 items-center justify-center p-10 sm:px-12">
+      <section className="relative flex flex-1 items-center justify-center overflow-y-auto p-10 sm:px-12">
         <div className="w-full max-w-[360px]">{children}</div>
       </section>
     </main>

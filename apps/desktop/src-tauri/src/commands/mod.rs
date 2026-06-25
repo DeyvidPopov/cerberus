@@ -16,11 +16,11 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
-use crate::crypto::{AeadCiphertext, KdfParams, SecretString, NONCE_LEN};
+use crate::crypto::{AeadCiphertext, KdfParams, SecretString, VaultKey, NONCE_LEN};
 use crate::vault::{
     build_registration, decrypt_credential, derive_login_auth_key, encrypt_credential,
-    unwrap_login_vault_key, CredentialData, CredentialRecord, CredentialSummary, VaultManager,
-    VaultStore,
+    unwrap_login_vault_key, CredentialData, CredentialRecord, CredentialSummary, PulledCredential,
+    VaultManager,
 };
 
 /// Managed Tauri state: the vault session behind a mutex.
@@ -195,18 +195,144 @@ pub async fn open_credential(
     .map_err(|_| "key derivation was interrupted".to_owned())?
 }
 
+/// One encrypted item fetched from the server, to be merged into the local vault
+/// (camelCase to match the TS DTO). `revision` is the optimistic-concurrency value.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerItemDto {
+    pub id: String,
+    pub revision: u64,
+    pub ciphertext: String,
+    pub nonce: String,
+}
+
+/// Result of a pull-merge crossing back to the webview (counts only — no secrets).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeOutcomeDto {
+    pub added: usize,
+    pub updated: usize,
+    pub kept: usize,
+    pub skipped: usize,
+}
+
+struct DecryptedItems {
+    pulled: Vec<PulledCredential>,
+    skipped: usize,
+}
+
+/// Decode one server blob and decrypt it under the (server) vault key into the
+/// plaintext credential fields. Any failure (tamper, wrong key, bad JSON) is an Err.
+fn decode_and_decrypt(
+    vault_key: &VaultKey,
+    item: &ServerItemDto,
+) -> Result<CredentialData, String> {
+    let blob = aead_from(&item.ciphertext, &item.nonce)?;
+    let plaintext = decrypt_credential(vault_key, &blob).map_err(|e| e.to_string())?;
+    serde_json::from_slice(plaintext.expose()).map_err(|_| "invalid credential json".to_owned())
+}
+
+/// Derive the SERVER vault key (Argon2id) and decrypt every server blob, SKIPPING any
+/// that fail to decrypt (fail safe — a corrupt blob must never crash the unlock). The
+/// decrypted plaintext stays in Rust. Pure (no manager state) so it runs off-thread.
+fn decrypt_server_items(
+    master_password: String,
+    kdf_salt: &str,
+    kdf_params: KdfParams,
+    wrapped_vault_key: &str,
+    wrapped_vault_key_nonce: &str,
+    items: Vec<ServerItemDto>,
+) -> Result<DecryptedItems, String> {
+    let salt = STANDARD
+        .decode(kdf_salt)
+        .map_err(|_| "invalid salt".to_owned())?;
+    let wrapped = aead_from(wrapped_vault_key, wrapped_vault_key_nonce)?;
+    let secret = SecretString::new(master_password);
+    let vault_key =
+        unwrap_login_vault_key(&secret, &salt, &kdf_params, &wrapped).map_err(|e| e.to_string())?;
+
+    let mut pulled = Vec::with_capacity(items.len());
+    let mut skipped = 0usize;
+    for item in items {
+        match decode_and_decrypt(&vault_key, &item) {
+            Ok(data) => pulled.push(PulledCredential {
+                id: item.id,
+                revision: item.revision,
+                data,
+            }),
+            Err(_) => {
+                // Fail safe: skip a corrupt/undecryptable blob (only its opaque id is
+                // noted; never plaintext or identity). The unlock still succeeds.
+                skipped += 1;
+                eprintln!("vault sync: skipping undecryptable item {}", item.id);
+            }
+        }
+    }
+    Ok(DecryptedItems { pulled, skipped })
+}
+
+/// PULL on unlock (ADR-0008): fetch the user's encrypted server items, decrypt them
+/// client-side with the SERVER vault key (re-derived from the master password — the
+/// SAME `derive_master_key → encryption key → unwrap vault key` path the app already
+/// uses), and MERGE them into the local vault under the local vault key, reconciled
+/// by revision (higher wins; server-only added; local-only preserved; corrupt blobs
+/// skipped). The server only ever holds ciphertext; decryption is client-side only.
+#[tauri::command]
+pub async fn sync_pull_merge(
+    state: State<'_, VaultState>,
+    master_password: String,
+    kdf_salt: String,
+    kdf_params: KdfParamsDto,
+    wrapped_vault_key: String,
+    wrapped_vault_key_nonce: String,
+    items: Vec<ServerItemDto>,
+) -> Result<MergeOutcomeDto, String> {
+    let params: KdfParams = kdf_params.into();
+    // Heavy crypto (Argon2id + per-item AEAD) off the webview main thread.
+    let decrypted = tauri::async_runtime::spawn_blocking(move || {
+        decrypt_server_items(
+            master_password,
+            &kdf_salt,
+            params,
+            &wrapped_vault_key,
+            &wrapped_vault_key_nonce,
+            items,
+        )
+    })
+    .await
+    .map_err(|_| "vault sync was interrupted".to_owned())??;
+
+    let merged = manager(&state)?
+        .merge_pulled(&decrypted.pulled)
+        .map_err(|e| e.to_string())?;
+    Ok(MergeOutcomeDto {
+        added: merged.added,
+        updated: merged.updated,
+        kept: merged.kept,
+        skipped: decrypted.skipped,
+    })
+}
+
 /// Lock the shared manager, mapping mutex poisoning to a generic error.
 fn manager<'a>(state: &'a State<'_, VaultState>) -> Result<MutexGuard<'a, VaultManager>, String> {
     state.0.lock().map_err(|_| "vault unavailable".to_owned())
 }
 
-/// Unlock (or, on first run, initialize) the vault with the master password.
+/// Unlock (or, on first run, initialize) the vault for the account `vault_id` (its
+/// username) with the master password. The vault file is scoped to the account, so two
+/// accounts on one machine each get their own vault and never collide.
 #[tauri::command]
-pub fn unlock(state: State<'_, VaultState>, master_password: String) -> Result<(), String> {
+pub fn unlock(
+    state: State<'_, VaultState>,
+    master_password: String,
+    vault_id: String,
+) -> Result<(), String> {
     // Move the password into a zeroizing secret immediately; it is wiped when
     // `unlock` returns (the borrow ends and the SecretString drops).
     let secret = SecretString::new(master_password);
-    manager(&state)?.unlock(secret).map_err(|e| e.to_string())
+    manager(&state)?
+        .unlock(secret, &vault_id)
+        .map_err(|e| e.to_string())
 }
 
 /// Lock the vault, zeroizing all in-memory keys.
@@ -268,8 +394,10 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            let store = VaultStore::new(dir.join("vault.json"));
-            app.manage(VaultState(Mutex::new(VaultManager::new(store))));
+            // Per-account vault files live under this directory; the specific file is
+            // chosen at unlock from the account identity (so multiple accounts on one
+            // machine never collide on a single shared vault).
+            app.manage(VaultState(Mutex::new(VaultManager::new(dir))));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -277,6 +405,7 @@ pub fn run() {
             derive_login_auth_key_cmd,
             seal_credential,
             open_credential,
+            sync_pull_merge,
             unlock,
             lock,
             add_credential,
@@ -373,5 +502,82 @@ mod tests {
             cheap_params(),
         ));
         assert!(r.is_err());
+    }
+
+    // The PULL path end to end (the reinstall / multi-device case): decrypt real
+    // server blobs with the re-derived server vault key, SKIP a corrupt one (fail
+    // safe), then merge into a FRESH local vault and read every credential back.
+    #[test]
+    fn sync_pull_decrypts_skips_corrupt_and_reconstructs_a_fresh_vault() {
+        use crate::vault::account::build_registration_with_params;
+        use crate::vault::VaultManager;
+
+        let pw = "sync-master-pw";
+        let material = build_registration_with_params(
+            &SecretString::new(pw.to_owned()),
+            cheap_params().into(),
+        )
+        .unwrap();
+
+        // Seal credentials under the SERVER vault key (what the server stores).
+        let seal = |name: &str| -> ServerItemDto {
+            let data = CredentialData {
+                name: name.to_owned(),
+                username: format!("{name}@example.com"),
+                password: format!("{name}-secret"),
+                url: String::new(),
+                notes: String::new(),
+                item_type: String::new(),
+                favourite: false,
+                category: String::new(),
+                otp_secret: String::new(),
+                password_updated_at: String::new(),
+                card_number: String::new(),
+                card_expiry: String::new(),
+                card_cvv: String::new(),
+                card_holder: String::new(),
+            };
+            let json = serde_json::to_vec(&data).unwrap();
+            let ct = encrypt_credential(&material.vault_key, &json).unwrap();
+            ServerItemDto {
+                id: name.to_owned(),
+                revision: 1,
+                ciphertext: STANDARD.encode(&ct.ciphertext),
+                nonce: STANDARD.encode(ct.nonce),
+            }
+        };
+        let items = vec![
+            seal("GitHub"),
+            seal("Email"),
+            // A corrupt blob (well-formed base64, not a real ciphertext) → skipped.
+            ServerItemDto {
+                id: "corrupt".to_owned(),
+                revision: 1,
+                ciphertext: STANDARD.encode([7u8; 48]),
+                nonce: STANDARD.encode([9u8; NONCE_LEN]),
+            },
+        ];
+
+        let decrypted = decrypt_server_items(
+            pw.to_owned(),
+            &STANDARD.encode(material.kdf_salt),
+            material.kdf_params,
+            &STANDARD.encode(&material.wrapped_vault_key.ciphertext),
+            &STANDARD.encode(material.wrapped_vault_key.nonce),
+            items,
+        )
+        .unwrap();
+        assert_eq!(decrypted.pulled.len(), 2);
+        assert_eq!(decrypted.skipped, 1); // the corrupt blob was skipped, not fatal
+
+        // Merge into a FRESH local vault (independent local vault key) and read back.
+        let dir = tempfile::tempdir().unwrap();
+        let mut m = VaultManager::with_init_params(dir.path().to_path_buf(), cheap_params().into());
+        m.unlock(SecretString::from("local-only-pw"), "tester")
+            .unwrap();
+        let outcome = m.merge_pulled(&decrypted.pulled).unwrap();
+        assert_eq!((outcome.added, outcome.updated), (2, 0));
+        assert_eq!(m.list().unwrap().len(), 2);
+        assert_eq!(m.get("GitHub").unwrap().password, "GitHub-secret");
     }
 }

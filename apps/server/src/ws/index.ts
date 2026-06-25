@@ -160,6 +160,20 @@ async function handleWindow(
   }
 
   const result = await evaluator.evaluate(session.userId, message);
+
+  // GATED telemetry: stream the per-window in-session EWMA score ONLY to a
+  // step-up-confirmed session (the Risk Inspector). A normal session never receives
+  // it, so the generic lock copy (below) is unaffected (PROJECT.md §5; ADR-0012).
+  if (session.stepUpConfirmed) {
+    const score: ContinuousAuthServerMessage = {
+      type: 'score',
+      composite: result.composite,
+      threshold: result.threshold,
+      scored: result.scored,
+    };
+    ws.send(JSON.stringify(score));
+  }
+
   if (!result.spike) {
     return;
   }

@@ -14,7 +14,18 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../app';
 import type { ServerConfig } from '../config';
 import { createContinuousAuthService } from '../services/continuous-auth';
-import { bearer, loginGranted, registerAccount, userIdOf } from '../test-support/auth';
+import {
+  bearer,
+  enrolledActiveUser,
+  loginGranted,
+  loginReq,
+  registerAccount,
+  sampleVector,
+  seedConfirmedTotp,
+  totpCode,
+  userIdOf,
+} from '../test-support/auth';
+import { deviceFingerprintHash } from '../test-support/fixtures';
 import { testServerConfig } from '../test-support/config';
 import { createTestDb, type TestDb } from '../test-support/postgres';
 import { attachContinuousAuthWebSocket } from './index';
@@ -190,5 +201,71 @@ describe('continuous-auth WebSocket (ADR-0013)', () => {
     const locked = await streamAndWatch(token, frames, 1500);
     expect(locked).toBe(false);
     await request(app).get('/auth/me').set('Authorization', bearer(token)).expect(200);
+  }, 20_000);
+});
+
+// Per-window in-session score telemetry is GATED to a step-up-confirmed session (the
+// Risk Inspector). A normal session never receives it, so the generic lock copy is
+// unaffected (PROJECT.md §5; ADR-0012). Score messages carry a scalar composite +
+// threshold for the caller's OWN session — never a raw window or a signal name.
+function streamAndCollect(token: string, frames: string[], waitMs: number): Promise<{ type: string }[]> {
+  return new Promise((resolve) => {
+    const ws = openSocket(token);
+    const msgs: { type: string }[] = [];
+    const finish = (): void => {
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      resolve(msgs);
+    };
+    const timer = setTimeout(finish, waitMs);
+    ws.on('open', () => {
+      for (const f of frames) {
+        ws.send(f);
+      }
+    });
+    ws.on('message', (data) => {
+      try {
+        msgs.push(JSON.parse(data.toString()) as { type: string });
+      } catch {
+        /* ignore */
+      }
+    });
+    ws.on('error', () => {
+      clearTimeout(timer);
+      finish();
+    });
+  });
+}
+
+async function stepUpConfirmedToken(): Promise<string> {
+  const { acct, userId } = await enrolledActiveUser(app);
+  const secret = await seedConfirmedTotp(pool, config.baselineEncryptionKey, userId);
+  const stepUp = await loginReq(app, acct, { fingerprint: deviceFingerprintHash(), sample: sampleVector(3) }).expect(200);
+  const verified = await request(app)
+    .post('/auth/step-up/verify')
+    .send({ challengeToken: String(stepUp.body.challengeToken), code: totpCode(secret) })
+    .expect(200);
+  return String(verified.body.sessionToken);
+}
+
+describe('continuous-auth — gated per-window score (Risk Inspector)', () => {
+  it('a STEP-UP-CONFIRMED session receives per-window score messages', async () => {
+    const token = await stepUpConfirmedToken();
+    const frames = [NORMAL(1), NORMAL(2), NORMAL(3)];
+    const msgs = await streamAndCollect(token, frames, 1500);
+    const scores = msgs.filter((m) => m.type === 'score') as { type: string; composite: number; threshold: number }[];
+    expect(scores.length).toBeGreaterThanOrEqual(1);
+    expect(typeof scores[0]?.composite).toBe('number');
+    expect(typeof scores[0]?.threshold).toBe('number');
+  }, 20_000);
+
+  it('a NORMAL (non-step-up) session receives NO score messages (generic copy unchanged)', async () => {
+    const { token } = await sessionUser();
+    const frames = [NORMAL(1), NORMAL(2), NORMAL(3)];
+    const msgs = await streamAndCollect(token, frames, 1500);
+    expect(msgs.filter((m) => m.type === 'score').length).toBe(0);
   }, 20_000);
 });

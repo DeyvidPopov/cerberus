@@ -215,12 +215,27 @@ export const ContinuousAuthClientMessageSchema = z.discriminatedUnion('type', [M
 export type ContinuousAuthClientMessage = z.infer<typeof ContinuousAuthClientMessageSchema>;
 
 /**
- * Server → client messages. `locked` commands the client to LOCK the vault and
- * re-unlock (fail closed). The reason is a generic category — it never leaks which
- * signal fired or any score (PROJECT.md §5, ADR-0012).
+ * Server → client messages.
+ *
+ * `locked` commands the client to LOCK the vault and re-unlock (fail closed). Its
+ * reason is a generic category — it NEVER leaks which signal fired or any score
+ * (PROJECT.md §5, ADR-0012). This is what every normal session receives.
+ *
+ * `score` reports the in-session EWMA composite per window — the live mouse-behavior
+ * risk + the spike threshold — for the gated Risk Inspector's session monitor. The
+ * server sends it ONLY to a STEP-UP-CONFIRMED session (the inspector); a normal
+ * session never receives it, so the generic lock copy is unaffected. It is a scalar
+ * score for the caller's OWN session — never a raw mouse window or any signal name.
  */
 export const ContinuousAuthServerMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('locked'), reason: z.literal('risk') }),
+  z.object({
+    type: z.literal('score'),
+    composite: z.number(),
+    threshold: z.number(),
+    /** True only when scored against an ACTIVE mouse baseline (false = cold-start). */
+    scored: z.boolean(),
+  }),
 ]);
 export type ContinuousAuthServerMessage = z.infer<typeof ContinuousAuthServerMessageSchema>;
 

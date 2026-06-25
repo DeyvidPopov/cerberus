@@ -1,14 +1,17 @@
-import type { EnrollmentStatus, GrantedLoginResponse } from '@cerberus/shared-types';
-import { useRef, useState } from 'react';
+import type { EnrollmentStatus, GrantedLoginResponse, KdfParams, RiskExplanation } from '@cerberus/shared-types';
+import { DeniedLoginResponseSchema } from '@cerberus/shared-types';
+import { useMemo, useRef, useState } from 'react';
 
 import { Banner } from '../../components/ui/banner';
 import { Button } from '../../components/ui/button';
 import { Field } from '../../components/ui/label';
 import { Input } from '../../components/ui/input';
-import { EyeIcon, EyeOffIcon, ShieldCheckIcon } from '../../components/icons';
-import { getEnrollmentStatus } from '../../lib/api';
+import { AlertIcon, CheckIcon, EyeIcon, EyeOffIcon, ShieldCheckIcon } from '../../components/icons';
+import { ApiError, getEnrollmentStatus } from '../../lib/api';
+import { cn } from '../../lib/cn';
+import { evaluatePassword, type PasswordStrength } from '../../lib/password-strength';
 import { loginErrorMessage, registerErrorMessage, stepUpErrorMessage } from '../../lib/auth-errors';
-import { completeStepUp, loginAccount, registerAccount, unlockVault } from '../../lib/auth';
+import { completeStepUp, loginAccount, registerAccount, unlockAndPull } from '../../lib/auth';
 import { useKeystrokeCapture } from '../../lib/keystroke-capture';
 import { AuthFrame } from './AuthFrame';
 
@@ -36,6 +39,112 @@ interface AuthScreenProps {
 
 type Mode = 'login' | 'register';
 
+/**
+ * DEMO/THESIS ONLY: pull the deny breakdown a dev/demo server attaches to a 403. A
+ * production server never sends it (so this returns null) — the user-facing copy stays
+ * the generic "Access denied" (PROJECT.md §1, ADR-0012/0015). This only RENDERS data the
+ * server chose to expose outside production; it cannot reveal anything on its own.
+ */
+function extractDenyRisk(e: unknown): RiskExplanation | null {
+  if (!(e instanceof ApiError) || e.status !== 403) {
+    return null;
+  }
+  const parsed = DeniedLoginResponseSchema.safeParse(e.detail);
+  return parsed.success ? (parsed.data.risk ?? null) : null;
+}
+
+/** The demonstration-only "why was this denied?" panel (clearly labelled non-production). */
+function DenyExplanation({ risk }: { risk: RiskExplanation }) {
+  const sorted = [...risk.signals].sort((a, b) => b.contribution - a.contribution);
+  const max = Math.max(0.001, ...sorted.map((s) => s.contribution));
+  return (
+    <div className="mt-4 rounded-xl border border-danger/30 bg-danger/[0.06] p-4">
+      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-danger">
+        <AlertIcon size={14} /> Demonstration — why this was denied
+      </div>
+      <p className="mt-1 text-[11.5px] leading-[1.45] text-muted2">
+        Research / thesis view only. A production build never reveals this — the user just sees “Access denied.”
+      </p>
+      <div className="mt-3 flex items-center justify-between text-[12.5px]">
+        <span className="text-muted">Composite risk</span>
+        <span className="font-mono text-fg">
+          {risk.composite.toFixed(2)} <span className="text-muted2">/ deny ≥ {risk.threshold.toFixed(2)}</span>
+        </span>
+      </div>
+      <div className="mt-3 flex flex-col gap-2.5">
+        {sorted.map((s) => (
+          <div key={s.label}>
+            <div className="flex items-center justify-between text-[12px]">
+              <span className="font-medium text-fg">{s.label}</span>
+              <span className="font-mono text-muted">{s.contribution.toFixed(2)}</span>
+            </div>
+            <div className="mt-1 h-[5px] overflow-hidden rounded-full bg-white/[0.07]">
+              <div
+                className="h-full rounded-full bg-danger/70"
+                style={{ width: `${String(Math.round((s.contribution / max) * 100))}%` }}
+              />
+            </div>
+            <div className="mt-1 text-[11.5px] leading-[1.4] text-muted2">{s.reason}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** What `finishGranted` needs to open + pull-sync the local vault after a grant. */
+interface UnlockContext {
+  masterPassword: string;
+  kdfSalt: string;
+  kdfParams: KdfParams;
+  /** The account's username — scopes the LOCAL vault file per account (so accounts on
+   *  one machine don't collide on a single shared vault). */
+  username: string;
+}
+
+/** A single requirement row in the master-password checklist. */
+function Requirement({ ok, text }: { ok: boolean; text: string }) {
+  return (
+    <li className="flex items-center gap-2 text-[12px]">
+      <span className={cn('flex h-3.5 w-3.5 flex-none items-center justify-center', ok ? 'text-ok' : 'text-muted2')}>
+        {ok ? <CheckIcon size={12} /> : <span className="h-[3px] w-[3px] rounded-full bg-current" />}
+      </span>
+      <span className={ok ? 'text-muted' : 'text-muted2'}>{text}</span>
+    </li>
+  );
+}
+
+/** Master-password strength meter + requirements, shown only when CREATING a vault. The
+ *  master password never leaves the device, so this is assessed purely client-side. */
+function PasswordGuidance({ strength }: { strength: PasswordStrength }) {
+  const barColor = strength.score <= 1 ? 'bg-danger' : strength.score === 2 ? 'bg-accent' : 'bg-ok';
+  const labelColor = strength.score <= 1 ? 'text-danger' : strength.score === 2 ? 'text-accent-hi' : 'text-ok';
+  return (
+    <div className="mt-2.5" aria-live="polite">
+      <div className="flex items-center gap-2.5">
+        <div className="flex flex-1 gap-1">
+          {[0, 1, 2, 3].map((i) => (
+            <span
+              key={i}
+              className={cn('h-[3px] flex-1 rounded-full transition-colors', i < strength.score ? barColor : 'bg-white/[0.08]')}
+            />
+          ))}
+        </div>
+        <span className={cn('w-[52px] text-right text-[11px] font-semibold', labelColor)}>{strength.label}</span>
+      </div>
+      <ul className="mt-2.5 flex flex-col gap-1.5">
+        <Requirement ok={strength.checks.length} text="At least 12 characters" />
+        <Requirement ok={strength.checks.variety} text="Mix letters, numbers or symbols — or make it long" />
+        <Requirement ok={strength.checks.notCommon} text="Not a common or guessable password" />
+      </ul>
+      <p className="mt-2 text-[11.5px] leading-[1.45] text-faint">
+        This is the one password that unlocks everything — we can&rsquo;t reset it. A long passphrase is easiest to
+        remember and hardest to guess.
+      </p>
+    </div>
+  );
+}
+
 // Entry screen. The master password lives in component state only until handed to
 // the Rust derivation, then cleared (PROJECT.md §4.2). The password input's
 // KEYSTROKE TIMING (positions only, never characters — see lib/keystroke) is
@@ -51,17 +160,25 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // DEMO-ONLY: the breakdown a dev/demo server attaches to a high-risk deny. In a
+  // production build the server omits it (stays null), so the deny copy is generic.
+  const [denyRisk, setDenyRisk] = useState<RiskExplanation | null>(null);
   const [busy, setBusy] = useState(false);
   const [showPw, setShowPw] = useState(false);
+  // True right after registering — shows a "now sign in" banner on the login step.
+  const [registered, setRegistered] = useState(false);
   // When a login bands to step_up, hold the challenge until the TOTP code is entered.
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState('');
   const capture = useKeystrokeCapture();
-  // The master password needed to open the LOCAL vault once a step-up passes. Held
-  // in a ref (not rendered, survives a wrong-code retry) and wiped the instant the
-  // vault unlocks or the user abandons the step-up. The visible `password` state is
-  // cleared as soon as the step-up prompt appears.
-  const pendingUnlockPw = useRef<string | null>(null);
+  // Client-side master-password grading (never sent anywhere). Declared up here with the
+  // other hooks — BEFORE the step-up early return — so the hook order stays stable.
+  const strength = useMemo(() => evaluatePassword(password), [password]);
+  // The context needed to open AND pull-sync the LOCAL vault once a step-up passes:
+  // the master password + the prelogin KDF salt/params. Held in a ref (not rendered,
+  // survives a wrong-code retry) and wiped the instant the vault unlocks or the user
+  // abandons the step-up. The visible `password` state is cleared at the step-up prompt.
+  const pendingUnlock = useRef<UnlockContext | null>(null);
 
   const clearSecrets = (): void => {
     setPassword('');
@@ -69,19 +186,20 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
     setTotpCode('');
   };
 
-  const finishGranted = async (session: GrantedLoginResponse, masterPassword: string): Promise<void> => {
-    // Access was GRANTED → open the local vault so the encryption key is held in
-    // memory (the source of truth for "Unlocked"). Do this BEFORE clearing the
-    // password. If it fails, proceed with the vault still LOCKED rather than
-    // claiming "Unlocked" (fail closed).
+  const finishGranted = async (session: GrantedLoginResponse, ctx: UnlockContext): Promise<void> => {
+    // Access was GRANTED → open the local vault (so the encryption key is held in
+    // memory — the source of truth for "Unlocked") AND pull-sync it from the server
+    // (server → local, by revision) so a second device / reinstall reconstructs the
+    // full vault. If the unlock fails, proceed LOCKED rather than claiming "Unlocked"
+    // (fail closed); the pull is best-effort and never blocks the open local vault.
     let vaultUnlocked = false;
     try {
-      await unlockVault(masterPassword);
+      await unlockAndPull(ctx.masterPassword, session, ctx.kdfSalt, ctx.kdfParams, ctx.username);
       vaultUnlocked = true;
     } catch {
       vaultUnlocked = false;
     }
-    pendingUnlockPw.current = null;
+    pendingUnlock.current = null;
     let enrollment: EnrollmentStatus | null = null;
     try {
       enrollment = await getEnrollmentStatus(session.sessionToken);
@@ -94,12 +212,15 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
   };
 
   const doRegister = async (): Promise<void> => {
-    // Registration authenticates but does NOT derive the vault key: the account
-    // lands LOCKED (vaultUnlocked: false). The user logs in to open the vault.
+    // Registration authenticates but does NOT derive the vault key (zero-knowledge). Land
+    // the user on the SIGN-IN step (username kept) to open the vault — that first sign-in
+    // also captures the first typing-rhythm sample; the rest of onboarding (2FA + rhythm)
+    // then runs in the vault. We intentionally do NOT auto-unlock here.
     await registerAccount(username, password);
     capture.reset();
     clearSecrets();
-    onAuthenticated({ token: null, enrollment: null, vaultUnlocked: false });
+    setMode('login');
+    setRegistered(true);
   };
 
   const doLogin = async (): Promise<void> => {
@@ -107,24 +228,30 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
     const features = capture.takeSample();
     const masterPassword = password;
     const outcome = await loginAccount(username, masterPassword, features);
+    const ctx: UnlockContext = {
+      masterPassword,
+      kdfSalt: outcome.kdfSalt,
+      kdfParams: outcome.kdfParams,
+      username,
+    };
     if (outcome.kind === 'granted') {
-      await finishGranted(outcome.session, masterPassword);
+      await finishGranted(outcome.session, ctx);
     } else {
       // Step-up required: keep the challenge and prompt for a TOTP code. Stash the
-      // password (needed to open the local vault once the step-up passes) and clear
-      // the visible field — the step-up screen shows only the code input.
-      pendingUnlockPw.current = masterPassword;
+      // unlock context (needed to open + pull-sync the local vault once the step-up
+      // passes) and clear the visible field — the step-up screen shows only the code.
+      pendingUnlock.current = ctx;
       setChallengeToken(outcome.challengeToken);
       clearSecrets();
     }
   };
 
   const doStepUp = async (): Promise<void> => {
-    if (challengeToken === null) {
+    if (challengeToken === null || pendingUnlock.current === null) {
       return;
     }
     const session = await completeStepUp({ challengeToken, code: totpCode });
-    await finishGranted(session, pendingUnlockPw.current ?? '');
+    await finishGranted(session, pendingUnlock.current);
   };
 
   // Each action supplies its own error→message mapping so every outcome renders a
@@ -133,12 +260,14 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
   // taken) / 400 / network distinctly instead of the raw "request failed" string.
   const run = (action: () => Promise<void>, mapError: (e: unknown) => string): void => {
     setError(null);
+    setDenyRisk(null);
     setBusy(true);
     void action()
       .catch((e: unknown) => {
         capture.reset();
         clearSecrets();
-        setError(mapError(e));
+        setError(mapError(e)); // the generic, non-leaking message (unchanged, ADR-0012)
+        setDenyRisk(extractDenyRisk(e)); // null unless a dev/demo server sent a breakdown
       })
       .finally(() => {
         setBusy(false);
@@ -160,10 +289,12 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
   const toggleMode = (): void => {
     setMode((current) => (current === 'login' ? 'register' : 'login'));
     setError(null);
+    setDenyRisk(null);
+    setRegistered(false);
     setChallengeToken(null);
     setShowPw(false);
     capture.reset();
-    pendingUnlockPw.current = null;
+    pendingUnlock.current = null;
     clearSecrets();
   };
 
@@ -251,7 +382,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
           onClick={() => {
             setChallengeToken(null);
             setError(null);
-            pendingUnlockPw.current = null;
+            pendingUnlock.current = null;
           }}
           disabled={busy}
           className="mt-4 block w-full text-center text-[13px] text-muted2 hover:text-fg disabled:opacity-50"
@@ -276,6 +407,13 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
           : 'Welcome back. Enter your master password to continue.'}
       </p>
 
+      {/* Just-registered: nudge the first sign-in (which starts the rhythm enrolment). */}
+      {!isRegister && registered && (
+        <Banner className="mt-5" tone="success" title="Account created">
+          Sign in to set up your security and open your vault.
+        </Banner>
+      )}
+
       {/* Continuous-auth spike-lock notice (presentation only; generic copy). */}
       {!isRegister && lockNotice === 'risk' && (
         <Banner className="mt-5" tone="info" title="Locked for your security">
@@ -284,6 +422,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
       )}
 
       {error !== null && <Banner className="mt-5" tone="error" title={error} />}
+      {denyRisk !== null && <DenyExplanation risk={denyRisk} />}
 
       <form
         className="mt-[22px] flex flex-col gap-[15px]"
@@ -313,6 +452,8 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
           inputRef: capture.inputRef,
         })}
 
+        {isRegister && password.length > 0 && <PasswordGuidance strength={strength} />}
+
         {isRegister &&
           passwordField({
             label: 'Confirm master password',
@@ -325,7 +466,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
         <Button
           type="submit"
           className="mt-1.5 w-full"
-          disabled={busy || username.length === 0 || password.length === 0}
+          disabled={busy || username.length === 0 || password.length === 0 || (isRegister && !strength.acceptable)}
         >
           {busy ? (isRegister ? 'Creating vault…' : 'Logging in…') : isRegister ? 'Create vault' : 'Log in'}
         </Button>

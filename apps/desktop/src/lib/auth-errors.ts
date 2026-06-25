@@ -9,6 +9,7 @@
 // or any risk detail. A deny is a single generic "access denied" string — the
 // server already withholds the reason (the risk_events row is server-side only).
 import { ApiError } from './api';
+import { SecureCoreError } from './secure-core';
 
 /** The distinct, user-facing categories an auth attempt can fail into. */
 export type AuthErrorKind =
@@ -17,17 +18,23 @@ export type AuthErrorKind =
   | 'rate_limited' // 429 — absolute backstop tripped
   | 'server_error' // 5xx — the server faulted (NOT an auth outcome; e.g. a DB/migration error)
   | 'network' // no HTTP response: server unreachable or a CSP block
-  | 'unknown'; // anything else (e.g. an IPC/derivation error)
+  | 'secure_core_unavailable' // the local Rust core/IPC bridge is absent or errored (NOT a server fault)
+  | 'unknown'; // anything else (e.g. an unexpected client error)
 
 /**
- * Classify a thrown auth error into one distinct kind. An {@link ApiError} carries
- * the HTTP status; a transport failure (fetch rejects with a TypeError on a
- * network error or a CSP block) has no status and maps to `network`. A 5xx is a
- * server fault (`server_error`) — distinct from a truly unexpected `unknown`, so a
- * backend problem (e.g. a 500 from an un-applied migration) reads as such rather
- * than as a vague client-side failure.
+ * Classify a thrown auth error into one distinct kind. A {@link SecureCoreError}
+ * (the local Rust core is unreachable, or its command failed) is its OWN kind —
+ * distinct from `network`: the SERVER is fine, the problem is the desktop runtime.
+ * An {@link ApiError} carries the HTTP status; a transport failure (fetch rejects
+ * with a TypeError on a network error or a CSP block) has no status and maps to
+ * `network`. A 5xx is a server fault (`server_error`) — distinct from a truly
+ * unexpected `unknown`, so a backend problem (e.g. a 500 from an un-applied
+ * migration) reads as such rather than as a vague client-side failure.
  */
 export function classifyAuthError(error: unknown): AuthErrorKind {
+  if (error instanceof SecureCoreError) {
+    return 'secure_core_unavailable';
+  }
   if (error instanceof ApiError) {
     if (error.status === 401) {
       return 'invalid_credentials';
@@ -54,6 +61,15 @@ export function classifyAuthError(error: unknown): AuthErrorKind {
 /** Generic, non-leaking copy for a server fault (5xx). Same across login/step-up/register. */
 const SERVER_ERROR_MESSAGE = 'The server ran into a problem. Please try again in a moment.';
 
+/**
+ * Copy for a local secure-core fault. Distinct from the server/network copy on purpose:
+ * it points at the DESKTOP runtime (open the app, restart it), which covers both causes
+ * — the webview opened outside the app, and the Rust core erroring. Same across flows;
+ * leaks no risk detail.
+ */
+const SECURE_CORE_MESSAGE =
+  "Cerberus's secure core isn't responding. Make sure the Cerberus desktop app is running, then restart it and try again.";
+
 /** Messages for a failed LOGIN attempt. Static strings — no risk detail leaks. */
 const LOGIN_MESSAGES: Record<AuthErrorKind, string> = {
   invalid_credentials: 'Incorrect username or master password',
@@ -61,6 +77,7 @@ const LOGIN_MESSAGES: Record<AuthErrorKind, string> = {
   rate_limited: 'Too many attempts. Please wait and try again.',
   server_error: SERVER_ERROR_MESSAGE,
   network: "Couldn't reach the server",
+  secure_core_unavailable: SECURE_CORE_MESSAGE,
   unknown: 'Something went wrong. Please try again.',
 };
 
@@ -71,6 +88,7 @@ const STEP_UP_MESSAGES: Record<AuthErrorKind, string> = {
   rate_limited: 'Too many attempts. Please wait and try again.',
   server_error: SERVER_ERROR_MESSAGE,
   network: "Couldn't reach the server",
+  secure_core_unavailable: SECURE_CORE_MESSAGE,
   unknown: 'Something went wrong. Please try again.',
 };
 
@@ -89,6 +107,9 @@ export function loginErrorMessage(error: unknown): string {
  * is ordinary registration UX, not a risk-signal disclosure.
  */
 export function registerErrorMessage(error: unknown): string {
+  if (error instanceof SecureCoreError) {
+    return SECURE_CORE_MESSAGE;
+  }
   if (error instanceof ApiError) {
     switch (error.status) {
       case 409:

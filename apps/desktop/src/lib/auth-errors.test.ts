@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ApiError } from './api';
+import { SecureCoreError } from './secure-core';
 import {
   classifyAuthError,
   loginErrorMessage,
@@ -24,7 +25,14 @@ describe('classifyAuthError', () => {
     expect(classifyAuthError(new TypeError('Failed to fetch'))).toBe('network');
   });
 
-  it('maps an unrecognized error (e.g. an IPC failure) to unknown', () => {
+  it('maps a local secure-core fault to its own kind (NOT network — the server is fine)', () => {
+    // Both causes (bridge absent / command failed) classify the same — the remedy is local.
+    expect(classifyAuthError(new SecureCoreError('unavailable'))).toBe('secure_core_unavailable');
+    expect(classifyAuthError(new SecureCoreError('failed'))).toBe('secure_core_unavailable');
+    expect(classifyAuthError(new SecureCoreError('unavailable'))).not.toBe('network');
+  });
+
+  it('maps an unrecognized error (e.g. an unexpected client error) to unknown', () => {
     expect(classifyAuthError('rust derivation failed')).toBe('unknown');
     expect(classifyAuthError(new Error('boom'))).toBe('unknown');
   });
@@ -38,6 +46,7 @@ describe('loginErrorMessage — each outcome renders a distinct message', () => 
       'rate_limited',
       'server_error',
       'network',
+      'secure_core_unavailable',
       'unknown',
     ];
     const errors: Record<AuthErrorKind, unknown> = {
@@ -46,13 +55,14 @@ describe('loginErrorMessage — each outcome renders a distinct message', () => 
       rate_limited: new ApiError(429, 'x'),
       server_error: new ApiError(500, 'x'),
       network: new TypeError('Failed to fetch'),
+      secure_core_unavailable: new SecureCoreError('failed'),
       unknown: new Error('x'),
     };
     const messages = kinds.map((k) => loginErrorMessage(errors[k]));
     expect(new Set(messages).size).toBe(kinds.length); // all distinct
   });
 
-  it('uses the specified copy for 401 / 403 / 5xx / network', () => {
+  it('uses the specified copy for 401 / 403 / 5xx / network / secure-core', () => {
     expect(loginErrorMessage(new ApiError(401, 'x'))).toBe('Incorrect username or master password');
     expect(loginErrorMessage(new ApiError(403, 'x'))).toBe('Access denied due to risk');
     expect(loginErrorMessage(new TypeError('Failed to fetch'))).toBe("Couldn't reach the server");
@@ -61,6 +71,14 @@ describe('loginErrorMessage — each outcome renders a distinct message', () => 
     const five = loginErrorMessage(new ApiError(500, 'internal_error'));
     expect(five).toMatch(/server ran into a problem/i);
     expect(five).not.toBe('Something went wrong. Please try again.');
+    // A local secure-core fault (the actual "Tester" symptom): a clear, distinct message
+    // that points at the desktop runtime, NOT the generic "Something went wrong" or the
+    // misleading "Couldn't reach the server".
+    const core = loginErrorMessage(new SecureCoreError('failed'));
+    expect(core).toMatch(/secure core/i);
+    expect(core).toMatch(/desktop app/i);
+    expect(core).not.toBe('Something went wrong. Please try again.');
+    expect(core).not.toBe("Couldn't reach the server");
   });
 
   it('PRIVACY: a deny message leaks no risk detail', () => {
@@ -87,6 +105,13 @@ describe('registerErrorMessage — distinct, non-leaking registration outcomes',
     expect(registerErrorMessage('rust derivation failed')).toMatch(/something went wrong/i);
   });
 
+  it('maps a secure-core fault during registration to the desktop-runtime message', () => {
+    const msg = registerErrorMessage(new SecureCoreError('unavailable'));
+    expect(msg).toMatch(/secure core/i);
+    expect(msg).toMatch(/desktop app/i);
+    expect(msg).not.toMatch(/something went wrong/i);
+  });
+
   it('never surfaces the raw postJson "request to /auth/register failed" string', () => {
     for (const status of [400, 409, 429, 500]) {
       expect(registerErrorMessage(new ApiError(status, 'request to /auth/register failed'))).not.toContain(
@@ -106,5 +131,25 @@ describe('stepUpErrorMessage', () => {
 
   it('reports a transport failure distinctly from an auth failure', () => {
     expect(stepUpErrorMessage(new TypeError('x'))).toBe("Couldn't reach the server");
+  });
+
+  it('reports a secure-core fault distinctly from a transport failure', () => {
+    const core = stepUpErrorMessage(new SecureCoreError('failed'));
+    expect(core).toMatch(/secure core/i);
+    expect(core).not.toBe("Couldn't reach the server");
+  });
+});
+
+describe('PRIVACY: the secure-core message leaks no risk detail (ADR-0012/0015)', () => {
+  it('names no signal, score, device, or location', () => {
+    for (const msg of [
+      loginErrorMessage(new SecureCoreError('failed')),
+      registerErrorMessage(new SecureCoreError('unavailable')),
+      stepUpErrorMessage(new SecureCoreError('failed')),
+    ]) {
+      expect(msg).not.toMatch(
+        /keystroke|mouse|device|geo|velocity|score|band|signal|composite|behaviou?ral|location/iu,
+      );
+    }
   });
 });

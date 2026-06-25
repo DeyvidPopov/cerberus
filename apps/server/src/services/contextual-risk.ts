@@ -19,7 +19,7 @@ import {
   type GeoFix,
   type SignalResult,
 } from '../risk/signals';
-import { truncateIp, type GeoLookup } from './geoip';
+import { truncateIp, type CoarseGeo, type GeoLookup } from './geoip';
 
 export interface ContextualRiskInput {
   userId: string;
@@ -30,6 +30,9 @@ export interface ContextualRiskInput {
   sessionCreatedAt: Date;
   /** Raw client IP (transient — used for lookup + truncation, never persisted raw). */
   ip: string | null;
+  /** DEMO-ONLY (non-production): a coarse geo to use INSTEAD of the IP lookup, so an
+   *  impossible-travel hop can be demonstrated on localhost. Null in production. */
+  geoOverride?: CoarseGeo | null;
   /** Evaluation time. */
   now: Date;
 }
@@ -85,7 +88,9 @@ export function createContextualRiskService(deps: ContextualRiskServiceDeps) {
       );
 
       // --- coarse geo (transient raw IP -> country/region; truncated IP persisted) ---
-      const coarse = input.ip !== null ? geoLookup(input.ip) : null;
+      // A demo geo override (non-production) wins over the IP lookup so an impossible-travel
+      // hop is demonstrable on localhost; otherwise resolve the raw IP to coarse geo.
+      const coarse = input.geoOverride ?? (input.ip !== null ? geoLookup(input.ip) : null);
       const geoCountry = coarse?.country ?? null;
       const geoRegion = coarse?.region ?? null;
       const ipTruncated = input.ip !== null ? truncateIp(input.ip) : null;

@@ -14,6 +14,15 @@ describe('CredentialSchema', () => {
     password: 's3cr3t',
     url: 'https://github.com',
     notes: '',
+    itemType: 'login',
+    favourite: false,
+    category: 'Work tools',
+    otpSecret: '',
+    passwordUpdatedAt: '2024-01-01T00:00:00Z',
+    cardNumber: '',
+    cardExpiry: '',
+    cardCvv: '',
+    cardHolder: '',
   };
 
   it('accepts a well-formed credential', () => {
@@ -36,7 +45,9 @@ describe('CredentialSchema', () => {
 
 describe('CredentialSummaryListSchema', () => {
   it('accepts an array of summaries', () => {
-    const list = [{ id: '1', name: 'n', username: 'u' }];
+    const list = [
+      { id: '1', name: 'n', username: 'u', url: '', itemType: 'login', favourite: false, category: '', hasOtp: false },
+    ];
     expect(CredentialSummaryListSchema.parse(list)).toEqual(list);
   });
 

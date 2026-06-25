@@ -4,20 +4,26 @@
 import {
   FEATURE_SCHEMA_VERSION,
   type GrantedLoginResponse,
+  type KdfParams,
+  type MergeOutcome,
   type StepUpVerifyRequest,
 } from '@cerberus/shared-types';
 
 import { login, prelogin, register, verifyStepUp } from './api';
 import { deviceFingerprintHash } from './device';
+import { syncPullOnUnlock } from './sync';
 import { deriveLoginAuthKey, prepareRegistration, unlock } from './tauri';
 
 /**
  * The outcome of a login: a granted session, or a step-up challenge that must be
  * satisfied with a TOTP code (ADR-0012). A hard deny surfaces as an ApiError(403).
+ *
+ * Both carry the prelogin KDF salt/params so the caller can open the local vault AND
+ * pull-sync from the server once access is granted (directly, or after a step-up).
  */
 export type LoginOutcome =
-  | { kind: 'granted'; session: GrantedLoginResponse }
-  | { kind: 'step_up'; challengeToken: string; expiresAt: string };
+  | { kind: 'granted'; session: GrantedLoginResponse; kdfSalt: string; kdfParams: KdfParams }
+  | { kind: 'step_up'; challengeToken: string; expiresAt: string; kdfSalt: string; kdfParams: KdfParams };
 
 /**
  * Register a new account. Rust derives the auth key + encryption key, generates
@@ -53,9 +59,15 @@ export async function loginAccount(
         : { featureSchemaVersion: FEATURE_SCHEMA_VERSION, features: keystrokeFeatures },
   });
   if (response.status === 'granted') {
-    return { kind: 'granted', session: response };
+    return { kind: 'granted', session: response, kdfSalt: params.kdfSalt, kdfParams: params.kdfParams };
   }
-  return { kind: 'step_up', challengeToken: response.challengeToken, expiresAt: response.expiresAt };
+  return {
+    kind: 'step_up',
+    challengeToken: response.challengeToken,
+    expiresAt: response.expiresAt,
+    kdfSalt: params.kdfSalt,
+    kdfParams: params.kdfParams,
+  };
 }
 
 /** Complete a step-up with a TOTP code, returning the now-granted session. */
@@ -70,7 +82,44 @@ export async function completeStepUp(req: StepUpVerifyRequest): Promise<GrantedL
  * must never open the local vault (fail closed, ADR-0012). The master password is
  * forwarded to the Rust core, which derives + unwraps the vault key; it never
  * reaches the server (PROJECT.md §1, §4.2). On first run this initializes the vault.
+ *
+ * `vaultId` (the account's username) scopes the LOCAL vault file per account, so two
+ * accounts on one machine never collide on a single shared vault.
  */
-export async function unlockVault(masterPassword: string): Promise<void> {
-  await unlock(masterPassword);
+export async function unlockVault(masterPassword: string, vaultId: string): Promise<void> {
+  await unlock(masterPassword, vaultId);
+}
+
+/**
+ * Open the local vault AND pull-sync it from the server (ADR-0008): unlock, then
+ * reconcile the server's encrypted items into the local vault (server → local, by
+ * revision). This is what makes a SECOND DEVICE or a REINSTALL reconstruct the full
+ * vault on unlock instead of showing an empty one.
+ *
+ * The unlock is authoritative for "is the vault usable": if it fails, this throws
+ * (the caller keeps the vault LOCKED). The pull is BEST-EFFORT — a network/server
+ * failure or a corrupt blob must NOT block the now-usable local vault; it is swallowed
+ * (and reconciles on the next unlock). Returns the merge counts, or null if the pull
+ * did not complete. Decryption is client-side only; the server holds only ciphertext.
+ */
+export async function unlockAndPull(
+  masterPassword: string,
+  session: GrantedLoginResponse,
+  kdfSalt: string,
+  kdfParams: KdfParams,
+  vaultId: string,
+): Promise<MergeOutcome | null> {
+  await unlockVault(masterPassword, vaultId);
+  try {
+    return await syncPullOnUnlock({
+      token: session.sessionToken,
+      masterPassword,
+      kdfSalt,
+      kdfParams,
+      wrappedVaultKey: session.wrappedVaultKey,
+      wrappedVaultKeyNonce: session.wrappedVaultKeyNonce,
+    });
+  } catch {
+    return null; // offline / server error / undecryptable: keep the local vault usable
+  }
 }

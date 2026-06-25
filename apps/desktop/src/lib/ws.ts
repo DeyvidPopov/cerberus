@@ -20,9 +20,23 @@ import {
 
 import { apiBaseUrl } from './api';
 
+export interface SessionScore {
+  /** In-session EWMA composite ∈ [0,1] for this window. */
+  composite: number;
+  /** The configured spike threshold (to mark on the monitor). */
+  threshold: number;
+  /** True only when scored against an active mouse baseline (false = cold-start). */
+  scored: boolean;
+}
+
 export interface ContinuousAuthHandlers {
   /** Called when the server commands a lock (risk spike). The vault must re-unlock. */
   onLocked: () => void;
+  /**
+   * Optional: per-window in-session score, for the gated Risk Inspector's monitor.
+   * Only a STEP-UP-CONFIRMED session ever receives these (the server gates them).
+   */
+  onScore?: (score: SessionScore) => void;
 }
 
 export interface ContinuousAuthClient {
@@ -64,6 +78,8 @@ export function openContinuousAuth(
     }
     if (parsed.type === 'locked') {
       handlers.onLocked();
+    } else if (parsed.type === 'score') {
+      handlers.onScore?.({ composite: parsed.composite, threshold: parsed.threshold, scored: parsed.scored });
     }
   });
 

@@ -176,7 +176,7 @@ function streamAndWatch(token: string, frames: string[], waitMs: number): Promis
   });
 }
 
-describe('demo-readiness — security evidence (a)-(i)', () => {
+describe('demo-readiness — security evidence (a)-(j)', () => {
   it('(a) zero-knowledge: a stored credential row is opaque ciphertext, no plaintext columns', async () => {
     const acct = await registerAccount(app);
     const token = await loginGranted(app, acct, {});
@@ -336,5 +336,29 @@ describe('demo-readiness — security evidence (a)-(i)', () => {
     // PRIVACY: the inspector payload carries scores/reasons only — never a raw vector.
     const body = JSON.stringify(res.body);
     expect(body).not.toContain('"features"');
+  });
+
+  it('(j) voluntary step-up: a granted session elevates IN PLACE with TOTP → inspector unlocks', async () => {
+    const { acct, userId } = await enrolledActiveUser(app);
+    const secret = await seedConfirmedTotp(pool, config.baselineEncryptionKey, userId);
+    // A genuine low-risk login → GRANTED (NOT step-up-confirmed): the inspector is gated.
+    const granted = await loginReq(app, acct, { sample: sampleVector(5) }).expect(200);
+    expect(granted.body.status).toBe('granted');
+    const token = String(granted.body.sessionToken);
+    await request(app).get('/risk/events').set('Authorization', bearer(token)).expect(403);
+
+    // Unauthenticated elevate → 401; a WRONG code does NOT elevate (fail closed) → still 403.
+    await request(app).post('/auth/step-up/elevate').send({ code: '000000' }).expect(401);
+    await request(app).post('/auth/step-up/elevate').set('Authorization', bearer(token)).send({ code: '000000' }).expect(401);
+    await request(app).get('/risk/events').set('Authorization', bearer(token)).expect(403);
+
+    // The CORRECT TOTP code elevates THIS session in place (no new token) → inspector allowed.
+    const elevated = await request(app)
+      .post('/auth/step-up/elevate')
+      .set('Authorization', bearer(token))
+      .send({ code: totpCode(secret) })
+      .expect(200);
+    expect(elevated.body.status).toBe('confirmed');
+    await request(app).get('/risk/events').set('Authorization', bearer(token)).expect(200);
   });
 });

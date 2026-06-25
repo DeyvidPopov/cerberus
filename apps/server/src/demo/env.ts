@@ -3,6 +3,9 @@
 // NONE of this is production code: it is invoked ONLY by the `demo:*` npm scripts
 // and is hard-gated to non-production. It creates/destroys a throwaway demo account
 // on a LOCAL dev database. It never changes scoring, policy, or any production path.
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import { featureDimension, FEATURE_SCHEMA_VERSION } from '@cerberus/shared-types';
 
 /** The demo account's fixed identity (printed for the operator; not a secret of value). */
@@ -26,6 +29,32 @@ export const DEMO_FEATURE_SCHEMA_VERSION = FEATURE_SCHEMA_VERSION;
  * would let the contextual signal dominate and could deny instead of step-up.
  */
 export const DEMO_DEVICE_FINGERPRINT = Buffer.from('cerberus-demo-device-fixed-00000', 'utf8').toString('base64');
+
+/**
+ * The Tauri app's bundle identifier — MUST match `identifier` in
+ * apps/desktop/src-tauri/tauri.conf.json. The desktop app stores its LOCAL vault at
+ * `app_data_dir()/vault.json`, where `app_data_dir()` = the OS data dir + identifier.
+ */
+export const APP_IDENTIFIER = 'com.cerberus.vault';
+
+/**
+ * Resolve the desktop app's LOCAL vault file (`app_data_dir/vault.json`) — the store
+ * the app's `list_credentials` actually reads (the server's `vault_items` is a
+ * SEPARATE sync store the app does not pull). Mirrors Tauri v2's `app_data_dir()`:
+ * Windows %APPDATA% (Roaming), macOS ~/Library/Application Support, Linux
+ * $XDG_DATA_HOME or ~/.local/share — each joined with the bundle identifier.
+ */
+export function localVaultPath(): string {
+  let base: string;
+  if (process.platform === 'win32') {
+    base = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming');
+  } else if (process.platform === 'darwin') {
+    base = join(homedir(), 'Library', 'Application Support');
+  } else {
+    base = process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share');
+  }
+  return join(base, APP_IDENTIFIER, 'vault.json');
+}
 
 /** A few example credentials seeded as opaque AEAD blobs (server stores ciphertext only). */
 export const DEMO_CREDENTIALS = [

@@ -25,6 +25,9 @@ interface Entry {
 export class KeystrokeRecorder {
   private entries: Entry[] = [];
   private pending: number[] = [];
+  /** Set when the attempt can't yield a clean typing rhythm (a paste, or a mid-word
+   *  correction); `extract()` then returns null so no garbage sample is sent. */
+  private tainted = false;
 
   /** Record a keydown at `timestamp` (ms). Advances the position counter. */
   recordDown(timestamp: number): void {
@@ -49,6 +52,12 @@ export class KeystrokeRecorder {
   reset(): void {
     this.entries = [];
     this.pending = [];
+    this.tainted = false;
+  }
+
+  /** Mark this attempt unusable (a paste or a correction) — `extract()` returns null. */
+  markTainted(): void {
+    this.tainted = true;
   }
 
   /** Number of keydowns captured so far. */
@@ -83,6 +92,9 @@ export class KeystrokeRecorder {
    * the submit key is recognised structurally — a trailing keydown with no keyup.
    */
   extract(): number[] | null {
+    if (this.tainted) {
+      return null; // a paste / correction happened — not a clean rhythm
+    }
     let end = this.entries.length;
     while (end > 0 && this.entries[end - 1]?.up === null) {
       end -= 1;
@@ -104,46 +116,85 @@ export class KeystrokeRecorder {
 }
 
 /**
- * The minimal event shape this module reads: ONLY `repeat` (to drop key-repeat
- * keydowns), and it is optional. No `key`/`code`/`keyCode` — by construction the
- * capture handler cannot observe character identity. `readonly repeat?: boolean`
- * makes a real DOM `KeyboardEvent` structurally assignable here.
+ * The minimal keydown/keyup shape this module reads: ONLY `repeat` (to drop key-repeat
+ * keydowns), and it is optional. No `key`/`code`/`keyCode` — by construction the capture
+ * handler cannot observe character identity. `readonly repeat?: boolean` makes a real DOM
+ * `KeyboardEvent` structurally assignable here.
  */
 export interface KeystrokeProbeEvent {
   readonly repeat?: boolean;
 }
 
+/**
+ * The minimal `input` shape this module reads: ONLY `inputType` — the KIND of edit
+ * ('insertText', 'deleteContentBackward', 'insertFromPaste', …), NEVER `data` (which would
+ * carry the typed character). Used to count a keystroke only when a character is actually
+ * committed (so modifier keys — Shift/Ctrl/Alt — are excluded and the vector dimension is
+ * stable) and to reject pastes/corrections.
+ */
+export interface InputProbeEvent {
+  readonly inputType?: string;
+}
+
 /** A target the capture can attach to (a real `HTMLInputElement` satisfies this). */
 export interface KeystrokeCaptureTarget {
   addEventListener(type: 'keydown' | 'keyup', listener: (event: KeystrokeProbeEvent) => void): void;
-  removeEventListener(
-    type: 'keydown' | 'keyup',
-    listener: (event: KeystrokeProbeEvent) => void,
-  ): void;
+  addEventListener(type: 'input', listener: (event: InputProbeEvent) => void): void;
+  removeEventListener(type: 'keydown' | 'keyup', listener: (event: KeystrokeProbeEvent) => void): void;
+  removeEventListener(type: 'input', listener: (event: InputProbeEvent) => void): void;
 }
 
 /**
- * Attach keydown/keyup capture to an input. Returns a detach function. The
- * handlers read only `event.repeat` and the clock — never the typed character.
+ * Attach character-keystroke capture to an input. Returns a detach function.
+ *
+ * A keystroke is counted only when an `input` event confirms a CHARACTER was committed —
+ * a keydown's timestamp is buffered and recorded ONLY if the following `input` is an
+ * insertion. This excludes modifier keys (Shift/Ctrl/Alt produce a keydown but no `input`),
+ * so the vector dimension is exactly the number of characters and is STABLE across attempts
+ * (a mixed-case password no longer drifts in dimension). A paste (`insertFromPaste`) or a
+ * correction (`delete…`) TAINTS the attempt — you can't capture a typing rhythm from a
+ * paste, and a mid-word edit makes the timing unusable — so `extract()` returns null and no
+ * garbage sample is sent. The handlers read only `event.repeat`, `event.inputType`, and the
+ * clock — never the typed character (no `key`/`code`/`keyCode`/`data`).
  */
 export function attachKeystrokeCapture(
   target: KeystrokeCaptureTarget,
   recorder: KeystrokeRecorder,
   now: () => number = defaultNow,
 ): () => void {
+  let pendingDown: number | null = null; // last keydown not yet confirmed by an `input`
   const onDown = (event: KeystrokeProbeEvent): void => {
     if (event.repeat === true) {
       return; // ignore auto-repeat; it is not a fresh keystroke
     }
-    recorder.recordDown(now());
+    pendingDown = now(); // buffer; only confirmed if a character is produced
+  };
+  const onInput = (event: InputProbeEvent): void => {
+    const type = event.inputType;
+    if (type === 'insertFromPaste' || type === 'insertFromDrop') {
+      recorder.markTainted(); // a paste can't yield a typing rhythm
+      pendingDown = null;
+      return;
+    }
+    if (typeof type === 'string' && type.startsWith('delete')) {
+      recorder.markTainted(); // a correction makes the per-position timing unusable
+      pendingDown = null;
+      return;
+    }
+    if (pendingDown !== null) {
+      recorder.recordDown(pendingDown); // a character was committed → count this keystroke
+      pendingDown = null;
+    }
   };
   const onUp = (): void => {
     recorder.recordUp(now());
   };
   target.addEventListener('keydown', onDown);
+  target.addEventListener('input', onInput);
   target.addEventListener('keyup', onUp);
   return () => {
     target.removeEventListener('keydown', onDown);
+    target.removeEventListener('input', onInput);
     target.removeEventListener('keyup', onUp);
   };
 }

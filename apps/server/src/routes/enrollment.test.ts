@@ -160,6 +160,22 @@ describe('enrollment lifecycle — accumulate → fit → store model-only → p
     );
     expect(buffered.rows[0]?.n).toBe(0); // still purged; nothing re-buffered
   });
+
+  it('reset discards the buffered samples and returns to "enrolling, 0" (start over)', async () => {
+    const { token, userId } = await authedUser();
+    await submit(token, vec(DIMENSION, 1)).expect(201);
+    await submit(token, vec(DIMENSION, 2)).expect(201);
+
+    const reset = await request(app).post('/enrollment/reset').set('Authorization', bearer(token)).expect(200);
+    expect(reset.body.status).toBe('enrolling');
+    expect(reset.body.samplesCollected).toBe(0);
+
+    // The buffer is empty server-side, and status confirms it.
+    const remaining = await pool.query(`SELECT count(*)::int AS n FROM enrollment_samples WHERE user_id = $1`, [userId]);
+    expect(remaining.rows[0]?.n).toBe(0);
+    const status = await request(app).get('/enrollment/status').set('Authorization', bearer(token)).expect(200);
+    expect(status.body.samplesCollected).toBe(0);
+  });
 });
 
 describe('enrollment privacy / data-minimization (PROJECT.md §5, ADR-0002)', () => {

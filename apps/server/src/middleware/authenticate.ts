@@ -11,6 +11,8 @@ const BEARER_PREFIX = 'Bearer ';
  * contextual risk signals (ADR-0011). Never serialized wholesale to a client.
  */
 export interface AuthenticatedSession {
+  /** The session row id — server-side only (e.g. to elevate this session in place). */
+  id: string;
   userId: string;
   deviceId: string | null;
   createdAt: Date;
@@ -53,6 +55,7 @@ async function verify(
   }
 
   const authenticated: AuthenticatedSession = {
+    id: session.id,
     userId: session.userId,
     deviceId: session.deviceId,
     createdAt: session.createdAt,

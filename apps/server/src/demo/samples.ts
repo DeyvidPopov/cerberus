@@ -15,21 +15,34 @@ function lcg(seed: number): () => number {
 }
 
 /**
- * `count` genuine-looking samples: realistic keystroke timings (ms) with moderate
- * per-sample jitter, so the fitted covariance is non-degenerate. Layout matches
- * extractFeatureVector: [holds(n), down-down(n-1), up-down(n-1)] = 3n-2 values.
+ * `count` genuine-looking samples with a DELIBERATELY WIDE spread, so the fitted
+ * baseline covariance is LOOSE. This is the demo-readiness fix for the lockout: a
+ * synthetic baseline is never the demoer's real typing, and a TIGHT baseline flags
+ * EVERY real attempt as anomalous (high behavioral score → the login auto-escalates
+ * to step-up/deny). A loose baseline scores a real human typing the demo password
+ * LOW (→ granted), while the impostor's extreme sample (×50 normal) still scores ~1
+ * (→ step-up). Layout matches extractFeatureVector: [holds(n), DD(n-1), UD(n-1)].
  */
 export function genuineBaselineSamples(count: number): number[][] {
   const rnd = lcg(20_260_622);
   const n = DEMO_KEYSTROKE_COUNT;
   const samples: number[][] = [];
   for (let i = 0; i < count; i += 1) {
-    const holds = Array.from({ length: n }, () => 90 + (rnd() - 0.5) * 40); // ~70–110ms
-    const downDown = Array.from({ length: n - 1 }, () => 150 + (rnd() - 0.5) * 60); // ~120–180ms
-    const upDown = Array.from({ length: n - 1 }, () => 60 + (rnd() - 0.5) * 50); // ~35–85ms
+    const holds = Array.from({ length: n }, () => 105 + (rnd() - 0.5) * 260); // mean 105, std ~75
+    const downDown = Array.from({ length: n - 1 }, () => 175 + (rnd() - 0.5) * 320); // mean 175, std ~92
+    const upDown = Array.from({ length: n - 1 }, () => 75 + (rnd() - 0.5) * 280); // mean 75, std ~81
     samples.push([...holds, ...downDown, ...upDown]);
   }
   return samples;
+}
+
+/** A realistic genuine-typing sample for verification (NOT used in production paths). */
+export function realisticGenuineSample(): number[] {
+  const n = DEMO_KEYSTROKE_COUNT;
+  const holds = Array.from({ length: n }, (_v, i) => 95 + (i % 4) * 8); // ~95–119ms
+  const downDown = Array.from({ length: n - 1 }, (_v, i) => 160 + (i % 5) * 10);
+  const upDown = Array.from({ length: n - 1 }, (_v, i) => 65 + (i % 3) * 9);
+  return [...holds, ...downDown, ...upDown];
 }
 
 /**

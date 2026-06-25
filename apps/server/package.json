@@ -15,7 +15,8 @@
     "eval:integrated": "tsx src/eval/run-integrated-analysis.ts",
     "demo:seed": "tsx --env-file-if-exists=../../.env src/demo/seed.ts",
     "demo:reset": "tsx --env-file-if-exists=../../.env src/demo/reset.ts",
-    "demo:impostor": "tsx --env-file-if-exists=../../.env src/demo/impostor.ts"
+    "demo:impostor": "tsx --env-file-if-exists=../../.env src/demo/impostor.ts",
+    "demo:geovelocity": "tsx --env-file-if-exists=../../.env src/demo/geovelocity.ts"
   },
   "dependencies": {
     "@cerberus/protocol": "*",

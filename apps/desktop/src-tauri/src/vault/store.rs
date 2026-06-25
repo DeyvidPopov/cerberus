@@ -58,11 +58,16 @@ pub struct StoredKdf {
     pub salt: String,
 }
 
-/// One persisted credential: a non-secret id plus its encrypted blob.
+/// One persisted credential: a non-secret id plus its encrypted blob, and the
+/// server `revision` it was last reconciled at (optimistic-concurrency counter,
+/// ADR-0008). `#[serde(default)]` keeps older vault files (no revision) loadable —
+/// they read back as revision 0, so the first server pull (revision ≥ 1) wins.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredItem {
     pub id: String,
     pub blob: StoredBlob,
+    #[serde(default)]
+    pub revision: u64,
 }
 
 /// The whole vault file. Contains ONLY ciphertext + public KDF params/salt.

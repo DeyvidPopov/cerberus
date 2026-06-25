@@ -106,6 +106,17 @@ export function createEnrollmentService(deps: EnrollmentServiceDeps) {
     },
 
     /**
+     * Discard the user's buffered enrollment samples and start over (e.g. the user
+     * realised they pasted / mistyped during onboarding). Only clears the in-progress
+     * buffer — an already-ACTIVE baseline is left intact (the rhythm step isn't shown
+     * once it's active). Scoped to the caller's own user. Returns the fresh status.
+     */
+    async reset(userId: string): Promise<EnrollmentStatus> {
+      await createEnrollmentSamplesRepository(pool).deleteByUser(userId, modality);
+      return enrollingStatus(0);
+    },
+
+    /**
      * Accept one enrollment sample. Once the buffer reaches the threshold, fit
      * and activate the baseline and purge the buffer — all inside one
      * per-(user,modality)-serialized transaction so the fit/store/purge is atomic

@@ -16,6 +16,29 @@ export * from './mouse';
 // Used directly below (the login request may carry a keystroke sample, ADR-0012).
 import { EnrollmentSampleRequestSchema } from './behavioral';
 
+/** The kind of vault item — drives which fields/forms/detail the UI shows. */
+export const ItemTypeSchema = z.enum(['login', 'card', 'note']);
+export type ItemType = z.infer<typeof ItemTypeSchema>;
+
+/**
+ * Per-item metadata stored INSIDE the encrypted blob (the server never sees it):
+ * the item type, favourite flag, a free-text category, an optional per-item TOTP seed
+ * (the vault acts as the authenticator — base32, empty = none), when the password was
+ * last set (ISO, for the age reminder), and the card fields for a `card` item. All are
+ * additive over the original login shape and round-trip through the Rust core.
+ */
+const credentialMetaFields = {
+  itemType: ItemTypeSchema,
+  favourite: z.boolean(),
+  category: z.string(),
+  otpSecret: z.string(),
+  passwordUpdatedAt: z.string(),
+  cardNumber: z.string(),
+  cardExpiry: z.string(),
+  cardCvv: z.string(),
+  cardHolder: z.string(),
+} as const;
+
 /** Editable credential fields, sent to `add`/`update`. */
 export const CredentialInputSchema = z.object({
   name: z.string(),
@@ -23,18 +46,28 @@ export const CredentialInputSchema = z.object({
   password: z.string(),
   url: z.string(),
   notes: z.string(),
+  ...credentialMetaFields,
 });
 export type CredentialInput = z.infer<typeof CredentialInputSchema>;
 
-/** A list entry shown in the UI (no password). */
+/**
+ * A list entry shown in the UI. Carries the metadata the sidebar/list needs (type,
+ * favourite, category, whether a per-item OTP exists) but NEVER a secret — no password,
+ * card number, CVV, notes, or the OTP seed itself.
+ */
 export const CredentialSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
   username: z.string(),
+  url: z.string(),
+  itemType: ItemTypeSchema,
+  favourite: z.boolean(),
+  category: z.string(),
+  hasOtp: z.boolean(),
 });
 export type CredentialSummary = z.infer<typeof CredentialSummarySchema>;
 
-/** A full credential returned by `get` (id + plaintext fields). */
+/** A full credential returned by `get` (id + plaintext fields + per-item metadata). */
 export const CredentialSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -42,6 +75,7 @@ export const CredentialSchema = z.object({
   password: z.string(),
   url: z.string(),
   notes: z.string(),
+  ...credentialMetaFields,
 });
 export type Credential = z.infer<typeof CredentialSchema>;
 
@@ -174,6 +208,35 @@ export const LoginResponseSchema = z.discriminatedUnion('status', [
 ]);
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
+/**
+ * DEMONSTRATION-ONLY breakdown of a high-risk DENY, for the thesis/research build.
+ * NEVER present in a production response: the server attaches it to the 403 deny body
+ * ONLY outside production (mirroring the demo config overrides), so the shipped system's
+ * user-facing denial copy stays generic and leaks nothing (PROJECT.md §1, ADR-0012/0015).
+ * Each entry is a signal's additive contribution (weight × sub-score) + a short reason.
+ */
+export const RiskExplanationSignalSchema = z.object({
+  label: z.string(),
+  contribution: z.number(),
+  reason: z.string(),
+});
+export type RiskExplanationSignal = z.infer<typeof RiskExplanationSignalSchema>;
+
+export const RiskExplanationSchema = z.object({
+  composite: z.number(),
+  threshold: z.number(),
+  driver: z.string(),
+  signals: z.array(RiskExplanationSignalSchema),
+});
+export type RiskExplanation = z.infer<typeof RiskExplanationSchema>;
+
+/** 403 deny body. `risk` is present ONLY in a non-production (demo) build. */
+export const DeniedLoginResponseSchema = z.object({
+  error: z.literal('denied'),
+  risk: RiskExplanationSchema.optional(),
+});
+export type DeniedLoginResponse = z.infer<typeof DeniedLoginResponseSchema>;
+
 /** POST /auth/step-up/verify — complete a step-up with a TOTP code → a granted session. */
 export const StepUpVerifyRequestSchema = z.object({
   challengeToken: z.string().min(1).max(256),
@@ -182,6 +245,22 @@ export const StepUpVerifyRequestSchema = z.object({
 export type StepUpVerifyRequest = z.infer<typeof StepUpVerifyRequestSchema>;
 export const StepUpVerifyResponseSchema = GrantedLoginResponseSchema;
 export type StepUpVerifyResponse = z.infer<typeof StepUpVerifyResponseSchema>;
+
+/**
+ * POST /auth/step-up/elevate — voluntarily confirm a step-up on the CURRENT session
+ * (authenticated). Verifies a TOTP code against the caller's own confirmed secret and
+ * marks THIS session step-up-confirmed IN PLACE (no new session/token issued). Lets a
+ * granted (no-step-up) login reach the gated risk inspector by proving the second
+ * factor. Fail-closed: a wrong/expired code leaves the session un-elevated.
+ */
+export const StepUpElevateRequestSchema = z.object({
+  code: OtpCode,
+});
+export type StepUpElevateRequest = z.infer<typeof StepUpElevateRequestSchema>;
+export const StepUpElevateResponseSchema = z.object({
+  status: z.literal('confirmed'),
+});
+export type StepUpElevateResponse = z.infer<typeof StepUpElevateResponseSchema>;
 
 // --- TOTP enrollment (authenticated; ADR-0012) ---
 
@@ -325,3 +404,17 @@ export type SealedBlob = z.infer<typeof SealedBlobSchema>;
 
 /** IPC result of `open_credential` (the decrypted plaintext). */
 export const PlaintextResultSchema = z.string();
+
+/**
+ * IPC result of `sync_pull_merge` — counts from reconciling a server PULL into the
+ * local vault (ADR-0008): items `added`, `updated` (server revision was higher),
+ * `kept` (local revision was ≥ server), and `skipped` (a server blob failed to
+ * decrypt and was skipped — fail safe). Non-secret; carries no credential data.
+ */
+export const MergeOutcomeSchema = z.object({
+  added: z.number().int().nonnegative(),
+  updated: z.number().int().nonnegative(),
+  kept: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+});
+export type MergeOutcome = z.infer<typeof MergeOutcomeSchema>;

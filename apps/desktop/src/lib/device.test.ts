@@ -1,10 +1,14 @@
 import { createHash } from 'node:crypto';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { hashFingerprint } from './device';
+import { SecureCoreError } from './secure-core';
 
 describe('hashFingerprint', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   it('is deterministic and produces a base64 SHA-256 digest', async () => {
     const first = await hashFingerprint('device-abc');
     const second = await hashFingerprint('device-abc');
@@ -17,5 +21,12 @@ describe('hashFingerprint', () => {
 
   it('differs for different inputs', async () => {
     expect(await hashFingerprint('a')).not.toBe(await hashFingerprint('b'));
+  });
+
+  it('throws a typed SecureCoreError (not a bare TypeError) when Web Crypto is unavailable', async () => {
+    // A non-secure context (e.g. the app served over plain http on a LAN IP) has no
+    // crypto.subtle — surface that as a local-runtime fault, not a phantom network error.
+    vi.stubGlobal('crypto', {});
+    await expect(hashFingerprint('device-abc')).rejects.toBeInstanceOf(SecureCoreError);
   });
 });

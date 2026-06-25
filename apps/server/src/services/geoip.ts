@@ -23,6 +23,33 @@ export type GeoLookup = (ip: string) => CoarseGeo | null;
 export const NO_GEO_LOOKUP: GeoLookup = () => null;
 
 /**
+ * DEMO / THESIS-ONLY geo table — maps loopback + a handful of well-known public IPs to
+ * coarse country/region, so the geovelocity ("impossible travel") signal RESOLVES in a
+ * local demo WITHOUT a MaxMind GeoLite2 database. Honored ONLY outside production (the
+ * server bootstrap selects it when no DB is present and `NODE_ENV !== 'production'`), so
+ * it can never affect a shipped system. Loopback resolves so even a localhost login
+ * populates geo; demonstrate an impossible hop by setting `X-Forwarded-For` to two of
+ * these IPs in different countries (see `npm run demo:geovelocity`). Country codes match
+ * the centroid table; only coarse country/region is used — never precise coordinates.
+ */
+export const DEMO_GEO_IPS: Readonly<Record<string, CoarseGeo>> = {
+  '127.0.0.1': { country: 'US', region: 'CA' },
+  '::1': { country: 'US', region: 'CA' },
+  '::ffff:127.0.0.1': { country: 'US', region: 'CA' },
+  '8.8.8.8': { country: 'US', region: 'CA' }, // Google DNS (US)
+  '23.20.0.1': { country: 'US', region: 'VA' }, // AWS us-east (US)
+  '1.1.1.1': { country: 'AU', region: 'NSW' }, // Cloudflare (AU)
+  '133.11.0.1': { country: 'JP', region: '13' }, // University of Tokyo (JP)
+  '202.12.27.33': { country: 'JP', region: '13' }, // WIDE (JP)
+  '212.77.98.9': { country: 'PL', region: 'MZ' }, // wp.pl (PL)
+  '195.10.10.10': { country: 'GB', region: 'ENG' }, // (GB)
+  '200.160.0.10': { country: 'BR', region: 'SP' }, // (BR)
+};
+
+/** A demo geo lookup over [`DEMO_GEO_IPS`] (non-production only). */
+export const DEMO_GEO_LOOKUP: GeoLookup = (ip: string): CoarseGeo | null => DEMO_GEO_IPS[ip] ?? null;
+
+/**
  * Open a GeoLite2-City database and return a synchronous lookup. Returns the
  * no-op lookup if `dbPath` is undefined/empty/missing, so the server runs without
  * a GeoIP DB (the signal degrades to neutral).

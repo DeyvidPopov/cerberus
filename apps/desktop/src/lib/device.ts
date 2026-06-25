@@ -4,9 +4,15 @@
 // the server, which records known vs new devices (groundwork for the later
 // "new device" context signal). The hashing is split out as a pure function so
 // it is unit-testable without a browser environment.
+import { SecureCoreError } from './secure-core';
 
 /** SHA-256-hash an arbitrary string and return the digest as base64. */
 export async function hashFingerprint(raw: string): Promise<string> {
+  if (typeof crypto === 'undefined' || typeof crypto.subtle === 'undefined') {
+    // No Web Crypto → a non-secure context (e.g. the app served over plain http on a
+    // LAN IP). Surface it as a local-runtime fault, not a phantom "network" error.
+    throw new SecureCoreError('unavailable');
+  }
   const data = new TextEncoder().encode(raw);
   const digest = await crypto.subtle.digest('SHA-256', data);
   const bytes = new Uint8Array(digest);

@@ -1,6 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
-import { NO_GEO_LOOKUP, openGeoIp, truncateIp } from './geoip';
+import { DEMO_GEO_LOOKUP, NO_GEO_LOOKUP, openGeoIp, truncateIp } from './geoip';
+
+describe('DEMO_GEO_LOOKUP (non-production demo geo, no MaxMind DB)', () => {
+  it('resolves loopback so a localhost login still gets coarse geo', () => {
+    expect(DEMO_GEO_LOOKUP('127.0.0.1')?.country).toBe('US');
+    expect(DEMO_GEO_LOOKUP('::1')?.country).toBe('US');
+  });
+
+  it('resolves a curated set of public IPs to different countries (for an impossible hop)', () => {
+    expect(DEMO_GEO_LOOKUP('8.8.8.8')?.country).toBe('US');
+    expect(DEMO_GEO_LOOKUP('133.11.0.1')?.country).toBe('JP');
+    expect(DEMO_GEO_LOOKUP('1.1.1.1')?.country).toBe('AU');
+  });
+
+  it('returns null for an unknown IP (degrades to neutral, never a spurious high)', () => {
+    expect(DEMO_GEO_LOOKUP('198.51.100.7')).toBeNull();
+    // coarse only — no precise coordinates are ever exposed
+    const geo = DEMO_GEO_LOOKUP('8.8.8.8');
+    expect(Object.keys(geo ?? {}).sort()).toEqual(['country', 'region']);
+  });
+});
 
 describe('truncateIp (PROJECT.md §5 — no full IP persisted)', () => {
   it('zeroes the last octet of an IPv4 (/24)', () => {

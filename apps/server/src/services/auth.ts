@@ -11,10 +11,12 @@ import type {
   LoginRequest,
   PreloginResponse,
   RegisterRequest,
+  RiskExplanation,
 } from '@cerberus/shared-types';
 import type { Pool } from 'pg';
 
-import type { ServerConfig } from '../config';
+import { demoOverridesAllowed, type ServerConfig } from '../config';
+import { buildRiskExplanation } from './risk-explanation';
 import { createBehavioralBaselinesRepository } from '../repositories/behavioral-baselines';
 import { createDevicesRepository } from '../repositories/devices';
 import { createLoginFailuresRepository } from '../repositories/login-failures';
@@ -42,6 +44,9 @@ import type { TotpService } from './totp-service';
 /** Per-request login context (client IP for the backstop + failure history). */
 export interface LoginContext {
   ip: string | null;
+  /** DEMO-ONLY (non-production): an ISO country code from the `X-Demo-Geo` header,
+   *  used to simulate the current login's location. Ignored in production. */
+  demoGeoCountry?: string | null;
 }
 
 export interface AuthServiceDeps {
@@ -66,7 +71,8 @@ interface GrantedSession {
 export type LoginResult =
   | ({ kind: 'granted' } & GrantedSession)
   | { kind: 'step_up'; challengeToken: string; expiresAt: string }
-  | { kind: 'denied' }
+  // `risk` is a DEMO-ONLY breakdown attached outside production; never in a shipped build.
+  | { kind: 'denied'; risk?: RiskExplanation }
   | { kind: 'invalid_credentials' }
   | { kind: 'rate_limited'; retryAfterMs: number };
 
@@ -231,12 +237,21 @@ export function createAuthService(deps: AuthServiceDeps) {
       const accountFailures = await failures.countRecentByUser(user.id, windowStart(now));
       const hasConfirmedTotp = await createTotpSecretsRepository(pool).hasConfirmed(user.id);
 
+      // DEMO-ONLY (non-production): honor an X-Demo-Geo country to simulate this login's
+      // location so an impossible-travel hop is demonstrable on localhost. Ignored in
+      // production (same gate as the demo config overrides). Coarse country only.
+      const geoOverride =
+        demoOverridesAllowed(config.nodeEnv) && context.demoGeoCountry
+          ? { country: context.demoGeoCountry.toUpperCase(), region: null }
+          : null;
+
       const decision = await riskDecision.decide({
         userId: user.id,
         deviceId: device.id,
         isNewDevice: device.isNew,
         now: new Date(now),
         ip: context.ip,
+        geoOverride,
         behavioral,
         hasConfirmedTotp,
         accountFailures,
@@ -258,7 +273,14 @@ export function createAuthService(deps: AuthServiceDeps) {
       });
 
       if (decision.action === 'denied') {
-        return { kind: 'denied' };
+        // DEMO/THESIS ONLY: outside production, attach a human-readable breakdown of why
+        // this was denied. In production this is omitted, so the user-facing copy stays
+        // generic and leaks no signal/device/location (PROJECT.md §1, ADR-0012/0015) —
+        // the same gate the demo config overrides use.
+        const risk = demoOverridesAllowed(config.nodeEnv)
+          ? buildRiskExplanation(decision.signals, config.policy.thresholds.deny)
+          : undefined;
+        return { kind: 'denied', risk };
       }
       if (decision.action === 'step_up_required') {
         const challengeToken = generateSessionToken();
@@ -308,6 +330,29 @@ export function createAuthService(deps: AuthServiceDeps) {
       }
       // This session PASSED a TOTP step-up → mark it step-up-confirmed (gates /risk/events).
       return issueSession(challenge.userId, challenge.deviceId, challenge.isNewDevice, true);
+    },
+
+    /**
+     * Voluntary step-up on an EXISTING authenticated session: verify a TOTP code against
+     * the caller's own confirmed secret and mark THIS session step-up-confirmed in place
+     * (no new session/token). Lets a granted login reach the gated risk inspector by
+     * proving the second factor. Fail-closed: a wrong/expired code (or no second factor)
+     * records a failure (feeds failure-velocity) and leaves the session un-elevated.
+     */
+    async elevateStepUp(
+      input: { sessionId: string; userId: string; code: string },
+      context: LoginContext,
+    ): Promise<{ kind: 'confirmed' } | { kind: 'invalid_credentials' }> {
+      const result = await totp.verify(input.userId, input.code, Date.now());
+      if (!result.ok) {
+        await createLoginFailuresRepository(pool).record({
+          userId: input.userId,
+          ipTruncated: context.ip === null ? null : truncateIp(context.ip),
+        });
+        return { kind: 'invalid_credentials' };
+      }
+      await createSessionsRepository(pool).markStepUpConfirmed(input.sessionId);
+      return { kind: 'confirmed' };
     },
   };
 }

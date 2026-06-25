@@ -25,7 +25,7 @@ describe('Input primitive — M6 keystroke-capture compatibility (M12 constraint
     expect((node as unknown as HTMLInputElement | null)?.type).toBe('password');
   });
 
-  it('keystroke capture still fires on keydown/keyup of the forwarded input', () => {
+  it('keystroke capture still fires on character input of the forwarded input', () => {
     let node: HTMLInputElement | null = null;
     render(
       <Input
@@ -41,13 +41,18 @@ describe('Input primitive — M6 keystroke-capture compatibility (M12 constraint
     let t = 0;
     const detach = attachKeystrokeCapture(input, recorder, () => (t += 10));
 
-    input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+    // A real character: keydown → input(insertText) → keyup. Capture is now gated on the
+    // `input` event so modifier keys (which produce no `input`) are excluded.
+    const char = (): void => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+      input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+    };
+    char();
+    char();
 
-    // Two keystrokes captured by POSITION via the shadcn Input — the M6 timing
-    // path attaches to a real <input> exactly as before (no interception/debounce).
+    // Two keystrokes captured by POSITION via the shadcn Input — the M6 timing path
+    // attaches to a real <input> exactly as before (no interception/debounce).
     expect(recorder.length).toBe(2);
     detach();
   });

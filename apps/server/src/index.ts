@@ -1,10 +1,10 @@
 import { createServer } from 'node:http';
 
 import { createApp } from './app';
-import { loadConfig } from './config';
+import { demoOverridesAllowed, loadConfig } from './config';
 import { createPool } from './repositories/pool';
 import { createContinuousAuthService } from './services/continuous-auth';
-import { openGeoIp } from './services/geoip';
+import { DEMO_GEO_LOOKUP, NO_GEO_LOOKUP, openGeoIp } from './services/geoip';
 import { attachContinuousAuthWebSocket } from './ws';
 
 // Server bootstrap. Reads config, opens the offline GeoIP DB (if configured),
@@ -13,7 +13,14 @@ import { attachContinuousAuthWebSocket } from './ws';
 async function main(): Promise<void> {
   const config = loadConfig();
   const pool = createPool(config.databaseUrl);
-  const geoLookup = await openGeoIp(config.geoipDbPath);
+  // Real offline GeoIP if a GeoLite2 DB is present; otherwise, OUTSIDE PRODUCTION ONLY,
+  // fall back to the demo geo table so geovelocity resolves without a MaxMind DB. In
+  // production a missing DB stays neutral (NO_GEO_LOOKUP) — never the demo table.
+  let geoLookup = await openGeoIp(config.geoipDbPath);
+  if (geoLookup === NO_GEO_LOOKUP && demoOverridesAllowed(config.nodeEnv)) {
+    geoLookup = DEMO_GEO_LOOKUP;
+    console.log('[geo] No GeoLite2 DB found — using the DEMO geo table (non-production).');
+  }
   const app = createApp(pool, config, { geoLookup });
 
   // The continuous-auth telemetry stream needs the raw HTTP server for the upgrade.

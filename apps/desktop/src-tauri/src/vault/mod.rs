@@ -20,7 +20,10 @@ pub mod store;
 pub use account::{
     build_registration, derive_login_auth_key, unwrap_login_vault_key, RegistrationMaterial,
 };
-pub use manager::{CredentialData, CredentialRecord, CredentialSummary, VaultManager};
+pub use manager::{
+    CredentialData, CredentialRecord, CredentialSummary, MergeOutcome, PulledCredential,
+    VaultManager,
+};
 pub use store::{VaultFile, VaultStore};
 
 /// Associated data binding credential ciphertext to its purpose (domain separation).

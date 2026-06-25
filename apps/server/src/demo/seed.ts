@@ -12,11 +12,11 @@ async function main(): Promise<void> {
 
   const pool = createPool(config.databaseUrl);
   try {
-    const replaced = await removeDemo(pool); // idempotent: replace any prior demo account
-    if (replaced) {
-      console.log('Replaced an existing demo account.');
+    const { removed, deviceFingerprints } = await removeDemo(pool); // idempotent + resets failure state
+    if (removed) {
+      console.log(`Replaced an existing demo account (preserved ${String(deviceFingerprints.length)} device fingerprint(s)).`);
     }
-    const result = await seedDemo(pool, config);
+    const result = await seedDemo(pool, config, deviceFingerprints);
     printLoginNote(result);
   } finally {
     await pool.end();

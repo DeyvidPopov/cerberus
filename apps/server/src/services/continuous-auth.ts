@@ -42,6 +42,8 @@ export interface WindowEvaluation {
   subScore: number | null;
   /** The running in-session composite (EWMA) after this window. */
   composite: number;
+  /** The configured spike threshold (so a gated client can mark it on the monitor). */
+  threshold: number;
   /** Structured, explainable reason (score/distance metadata — NEVER the raw vector). */
   reason: Record<string, unknown>;
 }
@@ -83,7 +85,14 @@ export function createContinuousAuthService(deps: ContinuousAuthDeps) {
           if (!active) {
             // Cold-start: buffer the window toward the mouse baseline; never lock.
             await mouseEnrollment.submitSample(userId, sample);
-            return { scored: false, spike: false, subScore: null, composite, reason: { status: 'enrolling' } };
+            return {
+              scored: false,
+              spike: false,
+              subScore: null,
+              composite,
+              threshold: config.spikeThreshold,
+              reason: { status: 'enrolling' },
+            };
           }
 
           const result = await mouseScoring.scoreActive(userId, sample);
@@ -96,6 +105,7 @@ export function createContinuousAuthService(deps: ContinuousAuthDeps) {
               spike: false,
               subScore: null,
               composite,
+              threshold: config.spikeThreshold,
               reason: (result.keystroke.reason ?? {}) as Record<string, unknown>,
             };
           }
@@ -106,6 +116,7 @@ export function createContinuousAuthService(deps: ContinuousAuthDeps) {
             spike: isSpike(composite, config),
             subScore: result.behavioralScore,
             composite,
+            threshold: config.spikeThreshold,
             reason: (result.keystroke.reason ?? {}) as Record<string, unknown>,
           };
         },

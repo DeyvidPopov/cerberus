@@ -2,14 +2,18 @@ import {
   LoginRequestSchema,
   PreloginRequestSchema,
   RegisterRequestSchema,
+  StepUpElevateRequestSchema,
   StepUpVerifyRequestSchema,
   TotpConfirmRequestSchema,
+  type DeniedLoginResponse,
   type GrantedLoginResponse,
   type LoginRequest,
   type PreloginRequest,
   type RegisterRequest,
   type RegisterResponse,
   type SessionInfo,
+  type StepUpElevateRequest,
+  type StepUpElevateResponse,
   type StepUpRequiredResponse,
   type StepUpVerifyRequest,
   type TotpConfirmRequest,
@@ -20,6 +24,7 @@ import {
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 
 import { asyncHandler } from '../middleware/async-handler';
+import type { AuthenticatedSession } from '../middleware/authenticate';
 import { validateBody } from '../middleware/validate';
 import type { AuthService, LoginResult } from '../services/auth';
 import type { TotpService } from '../services/totp-service';
@@ -65,9 +70,14 @@ function sendLoginResult(res: Response, result: LoginResult): void {
       res.json(response);
       return;
     }
-    case 'denied':
-      res.status(403).json({ error: 'denied' });
+    case 'denied': {
+      // The deny copy is generic; `risk` is a DEMO-ONLY breakdown the service attaches
+      // outside production (it is `undefined` in a shipped build → omitted from the body).
+      const body: DeniedLoginResponse =
+        result.risk !== undefined ? { error: 'denied', risk: result.risk } : { error: 'denied' };
+      res.status(403).json(body);
       return;
+    }
     case 'rate_limited':
       res.setHeader('Retry-After', String(Math.ceil(result.retryAfterMs / 1000)));
       res.status(429).json({ error: 'too_many_requests' });
@@ -116,7 +126,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     validateBody(LoginRequestSchema),
     asyncHandler(async (req, res) => {
       const body = res.locals.body as LoginRequest;
-      const result = await deps.authService.login(body, { ip: clientIp(req) });
+      // DEMO-ONLY: the service honors `X-Demo-Geo` (a country code) to simulate this
+      // login's location — but ONLY outside production (it re-checks the env gate).
+      const result = await deps.authService.login(body, {
+        ip: clientIp(req),
+        demoGeoCountry: req.header('x-demo-geo') ?? null,
+      });
       sendLoginResult(res, result);
     }),
   );
@@ -129,6 +144,31 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       const body = res.locals.body as StepUpVerifyRequest;
       const result = await deps.authService.verifyStepUp(body, { ip: clientIp(req) });
       sendLoginResult(res, result);
+    }),
+  );
+
+  // Voluntary step-up on the CURRENT session (authenticated): prove the second factor
+  // to elevate a granted login to step-up-confirmed IN PLACE, unlocking the gated risk
+  // inspector. Generic 401 on a bad code (no risk/identity detail; ADR-0012). Chain:
+  // [authenticate] → rate-limit → validate → handler.
+  router.post(
+    '/auth/step-up/elevate',
+    deps.authenticate,
+    deps.ipLimit,
+    validateBody(StepUpElevateRequestSchema),
+    asyncHandler(async (req, res) => {
+      const session = res.locals.session as AuthenticatedSession;
+      const body = res.locals.body as StepUpElevateRequest;
+      const result = await deps.authService.elevateStepUp(
+        { sessionId: session.id, userId: session.userId, code: body.code },
+        { ip: clientIp(req) },
+      );
+      if (result.kind !== 'confirmed') {
+        res.status(401).json({ error: 'invalid_code' });
+        return;
+      }
+      const response: StepUpElevateResponse = { status: 'confirmed' };
+      res.json(response);
     }),
   );
 

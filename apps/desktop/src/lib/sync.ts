@@ -3,10 +3,15 @@
 // Glue between the server API (HTTP) and the Rust crypto (IPC). The local
 // encrypted vault is the source of truth; this reconciles it with the server.
 // The master password is passed to Rust per operation and never persisted.
-import { CredentialInputSchema, type CredentialInput, type KdfParams } from '@cerberus/shared-types';
+import {
+  CredentialInputSchema,
+  type CredentialInput,
+  type KdfParams,
+  type MergeOutcome,
+} from '@cerberus/shared-types';
 
 import { createVaultItem, listVaultItems, updateVaultItem } from './api';
-import { openCredential, sealCredential, type OpenArgs, type SealArgs } from './tauri';
+import { openCredential, sealCredential, syncPullMerge, type OpenArgs, type SealArgs } from './tauri';
 
 /** Crypto context for a sync session (transient; not persisted to storage). */
 export interface SyncContext {
@@ -48,9 +53,35 @@ function openArgs(ctx: SyncContext, ciphertext: string, nonce: string): OpenArgs
 }
 
 /**
- * Pull on unlock: list the user's opaque blobs and decrypt each via Rust. The
- * caller has already fetched the wrapped vault key (bootstrap order:
- * login → GET vault key → unwrap → GET items → decrypt).
+ * PULL on unlock (server → local; ADR-0008) — the wired path. Lists the user's
+ * encrypted blobs and hands them to Rust, which decrypts them client-side (server
+ * vault key) and MERGES them into the local vault reconciled by revision (higher
+ * wins; server-only added; local-only preserved; corrupt blobs skipped). The
+ * plaintext never returns to the webview — only the non-secret merge counts do.
+ * This is what makes a fresh client / reinstall reconstruct the full vault.
+ */
+export async function syncPullOnUnlock(ctx: SyncContext): Promise<MergeOutcome> {
+  const items = await listVaultItems(ctx.token);
+  return syncPullMerge({
+    masterPassword: ctx.masterPassword,
+    kdfSalt: ctx.kdfSalt,
+    kdfParams: ctx.kdfParams,
+    wrappedVaultKey: ctx.wrappedVaultKey,
+    wrappedVaultKeyNonce: ctx.wrappedVaultKeyNonce,
+    items: items.map((i) => ({
+      id: i.id,
+      revision: i.revision,
+      ciphertext: i.ciphertext,
+      nonce: i.nonce,
+    })),
+  });
+}
+
+/**
+ * Pull on unlock (decrypt-in-JS variant): list the user's opaque blobs and decrypt
+ * each via Rust, returning the plaintext to the caller. Superseded for the unlock
+ * path by {@link syncPullOnUnlock} (which keeps plaintext in Rust); retained for
+ * callers that need the decrypted items in the webview.
  */
 export async function pullItems(ctx: SyncContext): Promise<PulledItem[]> {
   const items = await listVaultItems(ctx.token);
