@@ -53,8 +53,14 @@ Creates (idempotently — it replaces any prior demo account) on the **local dev
 - a **confirmed TOTP secret** — the script prints the base32 secret and the
   `otpauth://` URI so you can add it to an authenticator app;
 - a **known device** enrolled (so a later login isn't penalised as a new device);
-- a few **example credentials** stored as opaque AEAD blobs (the server holds only
-  ciphertext — zero-knowledge intact).
+- a few **example credentials** stored as opaque AEAD blobs in the server's
+  `vault_items` (ciphertext only — zero-knowledge intact). The app pulls these from
+  the server on unlock (ADR-0008 pull-sync), so they appear in the vault on login —
+  the real multi-device / reinstall path, not a local seed.
+
+> The seed CLEARS the local `app_data_dir/vault.json` (backing up any existing one to
+> `vault.json.bak`) so the next unlock starts fresh and reconstructs the vault from
+> the server. Log in (unlock) AFTER seeding to pull the credentials in.
 
 It prints copy-pasteable login instructions. Refuses to run if `NODE_ENV=production`
 or against a non-local `DATABASE_URL` (override a throwaway remote dev DB only with

@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:"IBM Plex Sans",sans-serif;-webkit-font-smoothing:antialiased;background:#070809;color:#EDEEF1}
+  button{cursor:pointer;border:none;background:none;font-family:inherit;color:inherit}
+  ::selection{background:rgba(232,162,74,0.30)}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.09);border-radius:9px;border:2px solid transparent;background-clip:padding-box}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.16);background-clip:padding-box}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes glowPulse{0%,100%{opacity:.45;transform:scale(1)}50%{opacity:.95;transform:scale(1.25)}}
+  @keyframes livePulse{0%,100%{opacity:.4;box-shadow:0 0 0 0 rgba(91,191,146,0.5)}50%{opacity:1;box-shadow:0 0 0 5px rgba(91,191,146,0)}}
+  @keyframes alertPulse{0%,100%{opacity:.5}50%{opacity:1}}
+</style>
+</helmet>
+
+<div style="position:fixed;inset:0;overflow:hidden;background:radial-gradient(120% 90% at 72% 6%,#15171D 0%,#0B0C0F 54%,#070809 100%);display:flex;align-items:center;justify-content:center;padding:22px">
+  <div style="position:absolute;inset:0;opacity:.4;pointer-events:none;background-image:radial-gradient(rgba(255,255,255,0.022) 1px,transparent 1px);background-size:26px 26px"></div>
+
+  <div style="position:relative;width:min(1380px,97vw);height:min(900px,95vh);border-radius:20px;overflow:hidden;display:flex;flex-direction:column;background:linear-gradient(165deg,#14161B,#0F1115);border:1px solid rgba(255,255,255,0.08);box-shadow:0 50px 130px rgba(0,0,0,0.62),inset 0 1px 0 rgba(255,255,255,0.04)">
+
+    <!-- HEADER -->
+    <div style="flex:none;display:flex;align-items:center;gap:16px;padding:16px 22px 14px;border-bottom:1px solid rgba(255,255,255,0.06)">
+      <div style="display:flex;align-items:center;gap:12px">
+        {{ markSm }}
+        <div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-family:'Space Grotesk';font-weight:600;font-size:18px;letter-spacing:-0.01em">Risk &amp; Behavior Inspector</span>
+            <span style="display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;letter-spacing:0.04em;color:#EFB888;padding:3px 9px;border-radius:999px;background:rgba(232,144,67,0.12);border:1px solid rgba(232,144,67,0.28)">{{ lockMini }} GATED · STEP-UP SESSION</span>
+          </div>
+          <div style="font-size:11.5px;color:#7A8089;margin-top:2px;letter-spacing:0.02em">Cerberus · adaptive risk-based authentication · research / demonstration view</div>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:2px;padding:3px;border-radius:11px;background:#101218;border:1px solid rgba(255,255,255,0.07)">
+          <span style="font-size:10px;font-weight:600;letter-spacing:0.06em;color:#6B717C;padding:0 8px">SIMULATE</span>
+          <button onClick="{{ injectGrant }}" style="font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;color:#86D3AE;background:rgba(91,191,146,0.10)">Grant</button>
+          <button onClick="{{ injectStepup }}" style="font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;color:#EFB888;background:rgba(232,162,74,0.10)">Step-up</button>
+          <button onClick="{{ injectDeny }}" style="font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;color:#EFA197;background:rgba(226,109,90,0.10)">Deny</button>
+        </div>
+        <button onClick="{{ simulateSpike }}" title="Drive the live session toward the spike-lock threshold" style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;padding:8px 13px;border-radius:10px;color:#EFA197;border:1px solid rgba(226,109,90,0.28);background:rgba(226,109,90,0.07)">{{ boltIcon }} Spike</button>
+        <button onClick="{{ toggleLive }}" style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;padding:8px 14px;border-radius:10px;color:{{ liveTextColor }};border:1px solid {{ liveBorder }};background:{{ liveBg }}">
+          <span style="width:8px;height:8px;border-radius:50%;background:{{ liveDotColor }};animation:{{ liveAnim }}"></span>{{ liveLabel }}
+        </button>
+      </div>
+    </div>
+
+    <!-- DEMO BANNER -->
+    <div style="flex:none;display:flex;align-items:center;gap:10px;padding:8px 22px;background:rgba(232,144,67,0.05);border-bottom:1px solid rgba(232,144,67,0.12)">
+      <span style="width:14px;height:14px;display:flex;color:#E89043;flex:none">{{ infoIcon }}</span>
+      <span style="font-size:11.5px;color:#B79A7E;line-height:1.4">Demonstration view — signals are simulated. In production these map to live behavioral &amp; contextual telemetry, computed zero-knowledge and gated behind a verified step-up session. No characters, names, or secrets are ever shown.</span>
+    </div>
+
+    <!-- DASHBOARD BODY -->
+    <div style="flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px">
+
+      <!-- ROW A: GAUGE + BREAKDOWN -->
+      <div style="display:flex;gap:12px;align-items:stretch;min-height:272px">
+
+        <!-- DECISION GAUGE -->
+        <div style="flex:none;width:366px;display:flex;flex-direction:column;background:linear-gradient(165deg,#181B21,#141519);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px 18px 18px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:11px;font-weight:600;letter-spacing:0.08em;color:#7A8089">DECISION GAUGE</span>
+            <span style="font-size:11px;color:#6B717C;font-family:'IBM Plex Mono'">attempt #{{ attemptNo }}</span>
+          </div>
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;margin-top:2px;height:158px">{{ gaugeSvg }}</div>
+          <div style="display:flex;flex-direction:column;align-items:center;margin-top:-14px">
+            <div style="font-family:'IBM Plex Mono';font-weight:600;font-size:40px;letter-spacing:-0.01em;color:{{ actionColor }};line-height:1">{{ scoreText }}</div>
+            <div style="font-size:11px;color:#6B717C;margin-top:3px;letter-spacing:0.04em">COMPOSITE RISK SCORE</div>
+            <div style="margin-top:11px;display:flex;align-items:center;gap:8px;padding:7px 15px;border-radius:999px;background:{{ actionChipBg }};border:1px solid {{ actionChipBorder }}">
+              <span style="width:8px;height:8px;border-radius:50%;background:{{ actionColor }};box-shadow:0 0 9px {{ actionColor }}"></span>
+              <span style="font-size:13px;font-weight:700;letter-spacing:0.03em;color:{{ actionColor }}">{{ actionLabel }}</span>
+            </div>
+          </div>
+          <div style="margin-top:14px;display:flex;gap:6px">
+            <sc-for list="{{ thresholds }}" as="t" hint-placeholder-count="3">
+              <div style="flex:1;text-align:center;padding:7px 4px;border-radius:9px;background:{{ t.bg }};border:1px solid {{ t.border }}">
+                <div style="font-size:10px;font-weight:600;letter-spacing:0.03em;color:{{ t.color }}">{{ t.label }}</div>
+                <div style="font-size:10.5px;color:#6B717C;font-family:'IBM Plex Mono';margin-top:2px">{{ t.range }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <!-- SIGNAL BREAKDOWN -->
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;background:linear-gradient(165deg,#181B21,#141519);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px 20px 14px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:11px;font-weight:600;letter-spacing:0.08em;color:#7A8089">SIGNAL BREAKDOWN · WHY THIS DECISION</span>
+            <span style="font-size:11px;color:#6B717C;font-family:'IBM Plex Mono'">Σ(weight × signal) = <span style="color:{{ actionColor }};font-weight:600">{{ scoreText }}</span></span>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:9px;margin-top:12px">
+            <sc-for list="{{ signals }}" as="s" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;gap:13px">
+                <span style="width:30px;height:30px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;color:{{ s.color }};background:{{ s.iconBg }}">{{ s.icon }}</span>
+                <div style="width:148px;flex:none">
+                  <div style="font-size:13px;font-weight:600;color:#EDEEF1">{{ s.label }}</div>
+                  <div style="font-size:11px;color:#8C929C;margin-top:1px">weight {{ s.weightTxt }}</div>
+                </div>
+                <div style="flex:1;min-width:0">
+                  <div style="height:9px;border-radius:5px;background:rgba(255,255,255,0.05);overflow:hidden"><div style="height:100%;border-radius:5px;background:{{ s.color }};width:{{ s.pct }}%;transition:width .6s cubic-bezier(.2,.8,.2,1)"></div></div>
+                  <div style="font-size:11.5px;color:#9BA1AC;margin-top:5px;line-height:1.3">{{ s.reason }}</div>
+                </div>
+                <div style="width:64px;flex:none;text-align:right">
+                  <div style="font-family:'IBM Plex Mono';font-size:14px;font-weight:600;color:{{ s.contribColor }}">{{ s.contribTxt }}</div>
+                  <div style="font-size:10px;color:#6B717C;letter-spacing:0.02em">contrib.</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <!-- ROW B: RHYTHM + MONITOR -->
+      <div style="display:flex;gap:12px;align-items:stretch;min-height:230px">
+
+        <!-- KEYSTROKE RHYTHM -->
+        <div style="flex:1.3;min-width:0;display:flex;flex-direction:column;background:linear-gradient(165deg,#181B21,#141519);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px 20px 14px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:11px;font-weight:600;letter-spacing:0.08em;color:#7A8089">KEYSTROKE RHYTHM · BASELINE vs CURRENT</span>
+            <div style="display:flex;align-items:center;gap:14px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:11px;color:#8C929C">{{ enrollText }}</span>
+                <div style="display:flex;gap:3px">
+                  <sc-for list="{{ enrollDots }}" as="d" hint-placeholder-count="5">
+                    <span style="width:7px;height:7px;border-radius:50%;background:{{ d.color }}"></span>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:18px;margin-top:9px">
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:16px;height:0;border-top:2px dashed #5A616C"></span><span style="font-size:11px;color:#8C929C">Enrolled baseline</span></div>
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:16px;height:0;border-top:2px solid #EBA64E"></span><span style="font-size:11px;color:#8C929C">Hold · current</span></div>
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:16px;height:0;border-top:2px solid #5BBF92"></span><span style="font-size:11px;color:#8C929C">Flight · current</span></div>
+            <div style="flex:1"></div>
+            <span style="font-size:11.5px;color:{{ mismatchColor }};font-weight:500">{{ mismatchText }}</span>
+          </div>
+          <div style="flex:1;margin-top:6px;min-height:0">{{ rhythmSvg }}</div>
+          <div style="display:flex;justify-content:space-between;padding:0 2px;margin-top:2px">
+            <sc-for list="{{ keyTicks }}" as="k" hint-placeholder-count="10">
+              <span style="font-size:9.5px;color:#5A616C;font-family:'IBM Plex Mono'">{{ k.label }}</span>
+            </sc-for>
+          </div>
+          <div style="font-size:10.5px;color:#5A616C;margin-top:4px;text-align:center;letter-spacing:0.02em">key position index — characters never captured</div>
+        </div>
+
+        <!-- LIVE SESSION MONITOR -->
+        <div style="flex:1;min-width:0;position:relative;display:flex;flex-direction:column;background:linear-gradient(165deg,#181B21,#141519);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px 20px 14px;overflow:hidden">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:11px;font-weight:600;letter-spacing:0.08em;color:#7A8089">LIVE SESSION MONITOR · CONTINUOUS AUTH</span>
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="width:7px;height:7px;border-radius:50%;background:{{ monitorDot }};animation:{{ monitorAnim }}"></span>
+              <span style="font-size:11px;color:{{ monitorTextColor }};font-weight:500">{{ monitorStatus }}</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:9px;margin-top:8px">
+            <span style="font-family:'IBM Plex Mono';font-weight:600;font-size:26px;color:{{ monitorValColor }}">{{ monitorVal }}</span>
+            <span style="font-size:11px;color:#6B717C">mouse-behavior risk · last 60s</span>
+          </div>
+          <div style="flex:1;margin-top:8px;min-height:0">{{ monitorSvg }}</div>
+          <div style="display:flex;justify-content:space-between;margin-top:2px">
+            <span style="font-size:10px;color:#5A616C;font-family:'IBM Plex Mono'">-60s</span>
+            <span style="font-size:10px;color:#5A616C;font-family:'IBM Plex Mono'">now</span>
+          </div>
+
+          <sc-if value="{{ showLock }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(12,9,9,0.74);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)">
+              <div style="text-align:center;padding:24px 26px;border-radius:16px;background:rgba(28,18,18,0.92);border:1px solid rgba(226,109,90,0.35);max-width:280px">
+                <div style="width:46px;height:46px;border-radius:13px;margin:0 auto;display:flex;align-items:center;justify-content:center;background:rgba(226,109,90,0.14);border:1px solid rgba(226,109,90,0.4);color:#E26D5A">{{ lockBig }}</div>
+                <div style="font-family:'Space Grotesk';font-weight:600;font-size:16px;margin-top:13px;color:#F2C0B6">Session locked</div>
+                <div style="font-size:12px;color:#C49A92;margin-top:5px;line-height:1.45">In-session risk crossed the spike-lock threshold. Re-authentication required.</div>
+                <button onClick="{{ ackLock }}" style="margin-top:14px;width:100%;height:38px;border-radius:10px;background:rgba(226,109,90,0.16);border:1px solid rgba(226,109,90,0.4);color:#F2C0B6;font-weight:600;font-size:12.5px">Acknowledge &amp; reset</button>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+
+      <!-- ROW C: RECENT EVENTS -->
+      <div style="flex:none;display:flex;flex-direction:column;background:linear-gradient(165deg,#181B21,#141519);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:14px 20px 8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:11px;font-weight:600;letter-spacing:0.08em;color:#7A8089">RECENT EVENTS · AUDIT TRAIL</span>
+          <span style="font-size:11px;color:#6B717C">select a row to replay it across the panels above</span>
+        </div>
+        <div style="display:grid;grid-template-columns:96px 92px 132px 1fr 132px;gap:12px;padding:0 12px 7px;border-bottom:1px solid rgba(255,255,255,0.06)">
+          <span style="font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#6B717C">TIME</span>
+          <span style="font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#6B717C">SCORE</span>
+          <span style="font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#6B717C">BAND</span>
+          <span style="font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#6B717C">SIGNAL DRIVER</span>
+          <span style="font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#6B717C;text-align:right">OUTCOME</span>
+        </div>
+        <div style="overflow-y:auto;max-height:128px">
+          <sc-for list="{{ events }}" as="e" hint-placeholder-count="6">
+            <button onClick="{{ e.onClick }}" style="width:100%;display:grid;grid-template-columns:96px 92px 132px 1fr 132px;gap:12px;align-items:center;padding:9px 12px;border-radius:10px;background:{{ e.bg }};border:1px solid {{ e.border }};text-align:left;margin-top:3px">
+              <span style="font-family:'IBM Plex Mono';font-size:12.5px;color:#A6ACB6">{{ e.time }}</span>
+              <span style="font-family:'IBM Plex Mono';font-size:13px;font-weight:600;color:{{ e.scoreColor }}">{{ e.scoreTxt }}</span>
+              <span style="justify-self:start;display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:999px;background:{{ e.bandBg }};color:{{ e.bandColor }}"><span style="width:6px;height:6px;border-radius:50%;background:{{ e.bandColor }}"></span>{{ e.bandLabel }}</span>
+              <span style="font-size:12.5px;color:#9BA1AC;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ e.driver }}</span>
+              <span style="text-align:right;font-size:12.5px;font-weight:500;color:{{ e.outcomeColor }}">{{ e.outcome }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  constructor(props){
+    super(props);
+    this.enrolled = {
+      hold:[112,96,128,90,120,104,132,94,116,100],
+      flight:[150,92,164,78,124,148,84,112,98,134]
+    };
+    this._seq = 1040;
+    this._now = 52380; // 14:33:00
+    const seed = [];
+    const plan = ['grant','grant','stepup','grant','deny','stepup'];
+    let t = this._now - 6*34;
+    plan.forEach(b=>{ t += 26 + Math.floor(Math.random()*30); seed.push(this.makeAttempt(b, t)); });
+    const events = seed.reverse();
+    const mon = [];
+    let v = 0.12;
+    for(let i=0;i<60;i++){ v = Math.max(0.05, Math.min(0.34, v + (Math.random()-0.5)*0.05)); mon.push(v); }
+    this.state = {
+      events,
+      currentId: events[0].id,
+      monitor: mon,
+      locked: false,
+      spikeMode: false,
+      liveOn: true,
+    };
+  }
+
+  // ---------- generators ----------
+  fmt(sec){ const h=Math.floor(sec/3600)%24, m=Math.floor(sec/60)%60, s=sec%60; const p=n=>String(n).padStart(2,'0'); return p(h)+':'+p(m)+':'+p(s); }
+
+  genRaw(band){
+    const r=(a,b)=>a+Math.random()*(b-a);
+    if(band==='grant') return {behavioral:r(0.04,0.17), newDevice:0, travel:r(0,0.12), timeOfDay:r(0.05,0.2), failureRate:r(0,0.1)};
+    if(band==='deny') return {behavioral:r(0.7,0.94), newDevice:1, travel:r(0.74,0.97), timeOfDay:r(0.5,0.82), failureRate:r(0.6,0.95)};
+    return {behavioral:r(0.26,0.5), newDevice: Math.random()<0.6?1:0, travel:r(0.2,0.55), timeOfDay:r(0.3,0.6), failureRate:r(0.16,0.46)};
+  }
+  weights(){ return [
+    {key:'behavioral', label:'Behavioral score', weight:0.40, color:'#EBA64E', icon:'activity'},
+    {key:'newDevice', label:'New device', weight:0.15, color:'#6E9BD6', icon:'device'},
+    {key:'travel', label:'Impossible travel', weight:0.20, color:'#B99BF0', icon:'globe'},
+    {key:'timeOfDay', label:'Time-of-day', weight:0.10, color:'#5BBF92', icon:'clock'},
+    {key:'failureRate', label:'Recent failures', weight:0.15, color:'#E26D5A', icon:'alert'},
+  ]; }
+  composite(raw){ return this.weights().reduce((a,w)=>a + w.weight*raw[w.key], 0); }
+  bandOf(c){ return c<0.30?'grant':(c<=0.70?'stepup':'deny'); }
+
+  genKeystroke(behavioral){
+    const base=this.enrolled, n=base.hold.length;
+    const hold=[], flight=[]; let maxDev=0, flagIdx=0, sumDev=0;
+    for(let i=0;i<n;i++){
+      const dh = behavioral*0.5*Math.sin(i*1.7) + (Math.random()-0.5)*0.08;
+      const df = behavioral*0.45*Math.cos(i*1.3) + (Math.random()-0.5)*0.08;
+      hold.push(Math.round(base.hold[i]*(1+dh)));
+      flight.push(Math.round(base.flight[i]*(1+df)));
+      const dev=Math.abs(dh); sumDev+=dev; if(dev>maxDev){maxDev=dev;flagIdx=i;}
+    }
+    return {hold, flight, flagIdx, avgDev: sumDev/n};
+  }
+
+  makeAttempt(band, time){
+    const raw=this.genRaw(band);
+    const comp=this.composite(raw);
+    const rb=this.bandOf(comp);
+    return {id:++this._seq, time:this.fmt(time), raw, comp, band:rb, ks:this.genKeystroke(raw.behavioral)};
+  }
+
+  // ---------- actions ----------
+  inject(band){
+    this._now += 4 + Math.floor(Math.random()*9);
+    const a=this.makeAttempt(band, this._now);
+    this.setState(s=>({events:[a, ...s.events].slice(0,9), currentId:a.id}));
+  }
+  select(id){ this.setState({currentId:id}); }
+  toggleLive(){ this.setState(s=>({liveOn:!s.liveOn})); }
+  simulateSpike(){ if(!this.state.locked) this.setState({spikeMode:true}); }
+  ackLock(){
+    const mon=[]; let v=0.10; for(let i=0;i<60;i++){ v=Math.max(0.05,Math.min(0.22,v+(Math.random()-0.5)*0.04)); mon.push(v);} 
+    this.setState({locked:false, spikeMode:false, monitor:mon});
+  }
+
+  componentDidMount(){
+    this._mon = setInterval(()=>this.tickMonitor(), 1000);
+    this._att = setInterval(()=>{ if(this.state.liveOn && !this.state.locked) this.inject(['grant','grant','stepup','grant','deny'][Math.floor(Math.random()*5)]); }, 7000);
+  }
+  componentWillUnmount(){ clearInterval(this._mon); clearInterval(this._att); }
+
+  tickMonitor(){
+    this.setState(s=>{
+      if(s.locked) return null;
+      const pts=s.monitor.slice();
+      let last=pts[pts.length-1];
+      let v, spikeMode=s.spikeMode, locked=false;
+      if(spikeMode){ v=last+0.09+Math.random()*0.05; }
+      else { v=last+(Math.random()-0.5)*0.06; v=Math.max(0.04,Math.min(0.5,v)); if(Math.random()<0.05) v+=0.13; }
+      v=Math.min(1,v);
+      pts.push(v); if(pts.length>60) pts.shift();
+      if(v>=0.75){ locked=true; spikeMode=false; }
+      return {monitor:pts, spikeMode, locked};
+    });
+  }
+
+  // ---------- icons ----------
+  icon(name, sw){
+    const p={fill:'none',stroke:'currentColor',strokeWidth:sw||1.7,strokeLinecap:'round',strokeLinejoin:'round'};
+    const path=(d,o={})=>React.createElement('path',{key:d,d,...p,...o});
+    const svg=(c)=>React.createElement('svg',{viewBox:'0 0 24 24',width:'100%',height:'100%'},c);
+    switch(name){
+      case 'activity': return svg([path('M3 12h3.5l2.5-7 4 14 2.5-7H21')]);
+      case 'device': return svg([React.createElement('rect',{key:'r',x:3,y:4,width:18,height:12,rx:2,...p}),path('M8 20h8M12 16v4')]);
+      case 'globe': return svg([React.createElement('circle',{key:'c',cx:12,cy:12,r:9,...p}),path('M3 12h18'),path('M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18')]);
+      case 'clock': return svg([React.createElement('circle',{key:'c',cx:12,cy:12,r:9,...p}),path('M12 7.5V12l3 2')]);
+      case 'alert': return svg([path('M12 4l9 15.5H3L12 4Z'),path('M12 10v4'),path('M12 17.4v.01',{strokeWidth:2.2})]);
+      case 'lock': return svg([React.createElement('rect',{key:'r',x:5,y:11,width:14,height:9,rx:2.5,...p}),path('M8 11V8a4 4 0 0 1 8 0v3')]);
+      case 'bolt': return svg([path('M13 3 5 13h5l-1 8 8-10h-5l1-8Z')]);
+      case 'info': return svg([React.createElement('circle',{key:'c',cx:12,cy:12,r:9,...p}),path('M12 11v5'),path('M12 8v.01',{strokeWidth:2.2})]);
+      default: return null;
+    }
+  }
+  I(name, s, sw){ return React.createElement('span',{style:{width:s,height:s,display:'flex',flexShrink:0,alignItems:'center',justifyContent:'center'}}, this.icon(name, sw)); }
+
+  mark(s){
+    return React.createElement('svg',{viewBox:'0 0 32 32',width:s,height:s,style:{flex:'none'}},[
+      React.createElement('defs',{key:'d'},React.createElement('linearGradient',{id:'rg'+s,x1:0,y1:0,x2:1,y2:1},[
+        React.createElement('stop',{key:0,offset:0,stopColor:'#F0B45E'}),React.createElement('stop',{key:1,offset:1,stopColor:'#D9892C'})])),
+      React.createElement('path',{key:'p',d:'M16 2.5l11 3.8V15c0 7.3-4.9 12.2-11 14.2C9.9 27.2 5 22.3 5 15V6.3L16 2.5Z',fill:'none',stroke:'url(#rg'+s+')',strokeWidth:1.8}),
+      React.createElement('circle',{key:'c1',cx:11,cy:14,r:1.6,fill:'#F0B45E'}),
+      React.createElement('circle',{key:'c2',cx:16,cy:14,r:1.6,fill:'#F0B45E'}),
+      React.createElement('circle',{key:'c3',cx:21,cy:14,r:1.6,fill:'#F0B45E'}),
+      React.createElement('path',{key:'p2',d:'M11 18.5c1.4 1.8 8.6 1.8 10 0',fill:'none',stroke:'#F0B45E',strokeWidth:1.6,strokeLinecap:'round'})
+    ]);
+  }
+
+  // ---------- charts ----------
+  arcPath(s0,s1,r){ const cx=170,cy=160,N=48; let d=''; for(let i=0;i<=N;i++){ const s=s0+(s1-s0)*i/N; const th=Math.PI*(1-s); const x=cx+r*Math.cos(th), y=cy-r*Math.sin(th); d+=(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)+' '; } return d; }
+  gauge(score, color){
+    const cx=170,cy=160,r=118; const el=[];
+    el.push(React.createElement('path',{key:'tk',d:this.arcPath(0,1,r),fill:'none',stroke:'#1B1E24',strokeWidth:22,strokeLinecap:'round'}));
+    el.push(React.createElement('path',{key:'g',d:this.arcPath(0.012,0.294,r),fill:'none',stroke:'#5BBF92',strokeWidth:22}));
+    el.push(React.createElement('path',{key:'a',d:this.arcPath(0.306,0.694,r),fill:'none',stroke:'#EBA64E',strokeWidth:22}));
+    el.push(React.createElement('path',{key:'d',d:this.arcPath(0.706,0.988,r),fill:'none',stroke:'#E26D5A',strokeWidth:22}));
+    [0,0.3,0.7,1].forEach((s,i)=>{ const th=Math.PI*(1-s); const lx=cx+(r+30)*Math.cos(th), ly=cy-(r+30)*Math.sin(th);
+      el.push(React.createElement('text',{key:'l'+i,x:lx,y:ly+4,fill:'#6B717C',fontSize:11,fontFamily:'IBM Plex Mono',textAnchor:'middle'}, s.toFixed(2))); });
+    const th=Math.PI*(1-score); const dx=cx+r*Math.cos(th), dy=cy-r*Math.sin(th);
+    const phi=180*score-180;
+    el.push(React.createElement('g',{key:'ndl',style:{transform:`rotate(${phi}deg)`,transformOrigin:cx+'px '+cy+'px',transition:'transform .9s cubic-bezier(.2,.8,.2,1)'}},
+      React.createElement('line',{x1:cx,y1:cy,x2:cx+(r-26),y2:cy,stroke:color,strokeWidth:3.5,strokeLinecap:'round'})));
+    el.push(React.createElement('circle',{key:'dot',cx:dx,cy:dy,r:9,fill:color,stroke:'#15171D',strokeWidth:3.5,style:{transition:'all .9s cubic-bezier(.2,.8,.2,1)'}}));
+    el.push(React.createElement('circle',{key:'hub',cx,cy,r:8,fill:'#15171D',stroke:color,strokeWidth:2.5}));
+    return React.createElement('svg',{viewBox:'0 0 340 178',width:'100%',height:'100%',style:{overflow:'visible'}},el);
+  }
+  monitor(pts, locked){
+    const W=600,N=60,thr=0.75; const yOf=v=>156-v*138; const xOf=i=>i/(N-1)*W; const start=N-pts.length;
+    let line=''; pts.forEach((v,idx)=>{ const x=xOf(start+idx), y=yOf(v); line+=(idx?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)+' '; });
+    const last=pts[pts.length-1]||0;
+    const col = locked?'#E26D5A' : last>0.55?'#EBA64E' : '#5BBF92';
+    const area = pts.length? ('M'+xOf(start).toFixed(1)+' 162 '+line.replace(/^M/,'L')+'L'+xOf(N-1).toFixed(1)+' 162 Z') : '';
+    const els=[
+      React.createElement('defs',{key:'df'},React.createElement('linearGradient',{id:'marea',x1:0,y1:0,x2:0,y2:1},[
+        React.createElement('stop',{key:0,offset:0,stopColor:col,stopOpacity:0.30}),React.createElement('stop',{key:1,offset:1,stopColor:col,stopOpacity:0})])),
+      React.createElement('line',{key:'thr',x1:0,y1:yOf(thr),x2:W,y2:yOf(thr),stroke:'#E26D5A',strokeWidth:1.4,strokeDasharray:'5 5',opacity:0.65}),
+      area&&React.createElement('path',{key:'ar',d:area,fill:'url(#marea)'}),
+      React.createElement('path',{key:'ln',d:line,fill:'none',stroke:col,strokeWidth:2.4,strokeLinejoin:'round',strokeLinecap:'round'}),
+    ];
+    if(pts.length){ const x=xOf(N-1), y=yOf(last);
+      els.push(React.createElement('circle',{key:'pg',cx:x,cy:y,r:9,fill:col,opacity:0.35,style:{transformOrigin:x+'px '+y+'px',animation:'glowPulse 1.6s ease-in-out infinite'}}));
+      els.push(React.createElement('circle',{key:'p',cx:x,cy:y,r:4,fill:col})); }
+    return React.createElement('svg',{viewBox:'0 0 600 170',width:'100%',height:'100%',preserveAspectRatio:'none'},els.filter(Boolean));
+  }
+  rhythm(ks){
+    const base=this.enrolled, n=base.hold.length, W=600;
+    const xOf=i=>30+i*((W-60)/(n-1));
+    const holdY=h=>92-(Math.max(60,Math.min(210,h))-60)/150*68;
+    const flY=f=>196-(Math.max(40,Math.min(220,f))-40)/180*68;
+    const mkLine=(arr,fn,stroke,dash,w)=>{ let d=''; arr.forEach((val,i)=>{ d+=(i?'L':'M')+xOf(i).toFixed(1)+' '+fn(val).toFixed(1)+' '; });
+      return React.createElement('path',{key:stroke+dash,d,fill:'none',stroke,strokeWidth:w||2,strokeDasharray:dash||'none',strokeLinejoin:'round',opacity:dash?0.65:1}); };
+    const dots=(arr,fn,fill)=>arr.map((val,i)=>React.createElement('circle',{key:fill+i,cx:xOf(i),cy:fn(val),r:2.6,fill}));
+    const els=[
+      React.createElement('line',{key:'dv',x1:0,y1:104,x2:W,y2:104,stroke:'rgba(255,255,255,0.06)',strokeWidth:1}),
+      React.createElement('text',{key:'hl',x:4,y:24,fill:'#5A616C',fontSize:10,fontFamily:'IBM Plex Mono'},'HOLD ms'),
+      React.createElement('text',{key:'fl',x:4,y:128,fill:'#5A616C',fontSize:10,fontFamily:'IBM Plex Mono'},'FLIGHT ms'),
+      mkLine(base.hold, holdY, '#5A616C', '5 4'),
+      mkLine(ks.hold, holdY, '#EBA64E', null, 2.4),
+      mkLine(base.flight, flY, '#5A616C', '5 4'),
+      mkLine(ks.flight, flY, '#5BBF92', null, 2.4),
+      ...dots(ks.hold, holdY, '#EBA64E'),
+      ...dots(ks.flight, flY, '#5BBF92'),
+    ];
+    // flag marker at largest hold deviation
+    els.push(React.createElement('circle',{key:'flag',cx:xOf(ks.flagIdx),cy:holdY(ks.hold[ks.flagIdx]),r:7,fill:'none',stroke: ks.avgDev>0.2?'#E26D5A':'#EBA64E',strokeWidth:1.6,opacity:0.9}));
+    return React.createElement('svg',{viewBox:'0 0 600 210',width:'100%',height:'100%',preserveAspectRatio:'none'},els);
+  }
+
+  renderVals(){
+    const st=this.state;
+    const cur = st.events.find(e=>e.id===st.currentId) || st.events[0];
+    const meta={
+      grant:{label:'GRANTED', color:'#5BBF92', driver:'Behavioral match'},
+      stepup:{label:'STEP-UP REQUIRED', color:'#EBA64E', driver:'New device + geovelocity'},
+      deny:{label:'ACCESS DENIED', color:'#E26D5A', driver:'Impossible travel + failures'},
+    };
+    const m=meta[cur.band];
+    const hexA=(hex,a)=>{ const n=parseInt(hex.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; };
+
+    // signals
+    const ws=this.weights();
+    const contribs=ws.map(w=>({...w, raw:cur.raw[w.key], contrib:w.weight*cur.raw[w.key]}));
+    const maxC=Math.max(0.001, ...contribs.map(c=>c.contrib));
+    const reasonOf=(k,r)=>{
+      if(k==='behavioral') return r<0.25?'Typing & pointer rhythm match enrolled profile':r<0.55?'Minor drift from enrolled rhythm':'Rhythm deviates sharply from baseline';
+      if(k==='newDevice') return r>0.5?'First-seen device fingerprint':'Recognized device & platform key';
+      if(k==='travel') return r<0.2?'Geo consistent with recent logins':r<0.6?'Moderate geovelocity vs last session':'Impossible travel — 2 cities, 7 min apart';
+      if(k==='timeOfDay') return r<0.3?'Within usual active hours':r<0.6?'Slightly off usual pattern':'Unusual hour for this account';
+      return r<0.2?'No recent failed attempts':r<0.5?'A few recent failures on account':'Elevated failed-attempt rate (10 min)';
+    };
+    const signals=contribs.map(c=>({
+      label:c.label, weightTxt:c.weight.toFixed(2), color:c.color, iconBg:hexA(c.color,0.12),
+      icon:this.I(c.icon,16,1.8), pct:Math.round(c.contrib/maxC*100), reason:reasonOf(c.key,c.raw),
+      contribTxt:c.contrib.toFixed(2), contribColor: c.contrib>=maxC-0.0001?c.color:'#C4C9D1',
+    }));
+
+    // thresholds
+    const thresholds=[
+      {label:'GRANT', range:'< 0.30', color:'#86D3AE', bg: cur.band==='grant'?'rgba(91,191,146,0.12)':'rgba(255,255,255,0.02)', border: cur.band==='grant'?'rgba(91,191,146,0.32)':'rgba(255,255,255,0.06)'},
+      {label:'STEP-UP', range:'0.30–0.70', color:'#EFB888', bg: cur.band==='stepup'?'rgba(232,162,74,0.12)':'rgba(255,255,255,0.02)', border: cur.band==='stepup'?'rgba(232,162,74,0.32)':'rgba(255,255,255,0.06)'},
+      {label:'DENY', range:'> 0.70', color:'#EFA197', bg: cur.band==='deny'?'rgba(226,109,90,0.12)':'rgba(255,255,255,0.02)', border: cur.band==='deny'?'rgba(226,109,90,0.32)':'rgba(255,255,255,0.06)'},
+    ];
+
+    // rhythm enroll dots (4 of 5)
+    const enrollDots=[0,1,2,3,4].map(i=>({color: i<4?'#EBA64E':'rgba(255,255,255,0.14)'}));
+    const devPct=Math.round(cur.ks.avgDev*100);
+    const flagged=cur.ks.avgDev>0.2;
+    const keyTicks=Array.from({length:10}).map((_,i)=>({label:'K'+String(i+1).padStart(2,'0')}));
+
+    // monitor
+    const last=st.monitor[st.monitor.length-1]||0;
+    const monStatus = st.locked?'locked':(st.spikeMode?'risk rising':'monitoring');
+    const monCol = st.locked?'#E26D5A':(last>0.55?'#EBA64E':'#5BBF92');
+
+    // events
+    const bandMeta={grant:{label:'GRANT',color:'#86D3AE'},stepup:{label:'STEP-UP',color:'#EFB888'},deny:{label:'DENY',color:'#EFA197'}};
+    const bandBgC={grant:'rgba(91,191,146,0.10)',stepup:'rgba(232,162,74,0.10)',deny:'rgba(226,109,90,0.10)'};
+    const outcomeTxt={grant:'Access granted',stepup:'Step-up required',deny:'Access denied'};
+    const events=st.events.map(e=>{
+      const sel=e.id===st.currentId; const bm=bandMeta[e.band];
+      return {time:e.time, scoreTxt:e.comp.toFixed(2), scoreColor:bm.color,
+        bandLabel:bm.label, bandColor:bm.color, bandBg:bandBgC[e.band],
+        driver: meta[e.band].driver, outcome:outcomeTxt[e.band], outcomeColor: e.band==='deny'?'#E89B90':'#A6ACB6',
+        onClick:()=>this.select(e.id),
+        bg: sel?'rgba(232,162,74,0.08)':'transparent', border: sel?'rgba(232,162,74,0.30)':'transparent'};
+    });
+
+    return {
+      markSm:this.mark(30), lockMini:this.I('lock',12,2), infoIcon:this.icon('info'),
+      boltIcon:this.I('bolt',14,1.8), lockBig:this.I('lock',24,1.6),
+      attemptNo: cur.id,
+      // gauge
+      gaugeSvg:this.gauge(cur.comp, m.color),
+      scoreText: cur.comp.toFixed(2), actionColor:m.color, actionLabel:m.label,
+      actionChipBg:hexA(m.color,0.10), actionChipBorder:hexA(m.color,0.3),
+      thresholds,
+      // breakdown
+      signals,
+      // rhythm
+      rhythmSvg:this.rhythm(cur.ks), enrollDots, keyTicks,
+      enrollText:'Profile 4 of 5',
+      mismatchText: (flagged?'⚠ ':'')+'Δ baseline '+devPct+'% · '+(flagged?'rhythm flagged':'within tolerance'),
+      mismatchColor: flagged?'#E89043':'#5BBF92',
+      // monitor
+      monitorSvg:this.monitor(st.monitor, st.locked),
+      monitorVal:last.toFixed(2), monitorValColor:monCol,
+      monitorStatus:monStatus, monitorTextColor: st.locked?'#EFA197':(st.spikeMode?'#EFB888':'#86D3AE'),
+      monitorDot:monCol, monitorAnim: st.locked?'alertPulse 1s ease-in-out infinite':'livePulse 1.8s ease-in-out infinite',
+      showLock:st.locked, ackLock:()=>this.ackLock(),
+      // events
+      events,
+      // header
+      injectGrant:()=>this.inject('grant'), injectStepup:()=>this.inject('stepup'), injectDeny:()=>this.inject('deny'),
+      simulateSpike:()=>this.simulateSpike(), toggleLive:()=>this.toggleLive(),
+      liveLabel: st.liveOn?'Live':'Paused',
+      liveTextColor: st.liveOn?'#86D3AE':'#9BA1AC',
+      liveBorder: st.liveOn?'rgba(91,191,146,0.28)':'rgba(255,255,255,0.1)',
+      liveBg: st.liveOn?'rgba(91,191,146,0.08)':'rgba(255,255,255,0.03)',
+      liveDotColor: st.liveOn?'#5BBF92':'#6B717C',
+      liveAnim: st.liveOn?'livePulse 1.8s ease-in-out infinite':'none',
+    };
+  }
+}
+</script>
+</body>
+</html>

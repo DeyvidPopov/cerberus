@@ -7,9 +7,14 @@ A zero-knowledge password vault with an adaptive, risk-based authentication laye
 description of _how_ the project is built lives in **[PROJECT.md](PROJECT.md)** and
 is binding. Architectural decisions are recorded in [docs/adr/](docs/adr/).
 
-**Status:** Milestone 1 — monorepo scaffold + CI. Structure and tooling only; no
-crypto, vault, or risk logic yet (those land in later phases — see
-[ROADMAP.md](ROADMAP.md)).
+**Status:** Implemented end-to-end (milestones M1–M12). The zero-knowledge vault, the
+Rust cryptographic core (Argon2id → HKDF-SHA-256 → XChaCha20-Poly1305), encrypted
+multi-device blob sync, behavioral (keystroke) + contextual risk scoring, the adaptive
+login policy with TOTP step-up, and mouse-dynamics continuous authentication are all
+built and tested. See [ROADMAP.md](ROADMAP.md) for the phase plan,
+[docs/CERBERUS_HANDOFF.md](docs/CERBERUS_HANDOFF.md) for the current state, and the
+[project encyclopedia](docs/encyclopedia/00-index.md) for a full, beginner-friendly
+walkthrough of the codebase.
 
 ---
 
