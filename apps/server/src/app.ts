@@ -1,7 +1,7 @@
 import express, { type Express } from 'express';
 import type { Pool } from 'pg';
 
-import type { ServerConfig } from './config';
+import { demoOverridesAllowed, type ServerConfig } from './config';
 import { createAuthenticate, requireStepUpConfirmed } from './middleware/authenticate';
 import { cors } from './middleware/cors';
 import { errorHandler } from './middleware/error-handler';
@@ -45,7 +45,7 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
   app.use(requestId);
   // CORS first so the desktop webview's cross-origin preflight is answered before
   // any handler (the app calls this API from its own origin).
-  app.use(cors(config.corsAllowedOrigins));
+  app.use(cors(config.corsAllowedOrigins, demoOverridesAllowed(config.nodeEnv)));
   app.use(express.json());
 
   // Shared per-process rate-limit state (PROJECT.md §4.3).
@@ -90,7 +90,10 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
     totp: totpService,
   });
   const vaultService = createVaultService({ pool });
-  const riskInspectorService = createRiskInspectorService({ pool });
+  const riskInspectorService = createRiskInspectorService({
+    pool,
+    baselineEncryptionKey: config.baselineEncryptionKey,
+  });
   const sessions = createSessionsRepository(pool);
   const authenticate = createAuthenticate(sessions);
 
@@ -123,6 +126,11 @@ export function createApp(pool: Pool, config: ServerConfig, deps: AppDeps = {}):
       authenticate,
       requireStepUp: requireStepUpConfirmed,
       rateLimit: rateLimitByUser(riskLimiter),
+      // The live keystroke-rhythm endpoint returns biometric-adjacent baseline data (the
+      // deliberate ADR-0018 relaxation of ADR-0002). Mount it ONLY outside production, so a
+      // shipped build never exposes a baseline — same non-production gate the demo deny
+      // breakdown uses. The non-biometric /risk/events stays available in every environment.
+      exposeKeystrokeRhythm: demoOverridesAllowed(config.nodeEnv),
     }),
   );
 

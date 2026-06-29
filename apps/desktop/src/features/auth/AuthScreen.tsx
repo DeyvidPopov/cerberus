@@ -12,6 +12,7 @@ import { cn } from '../../lib/cn';
 import { evaluatePassword, type PasswordStrength } from '../../lib/password-strength';
 import { loginErrorMessage, registerErrorMessage, stepUpErrorMessage } from '../../lib/auth-errors';
 import { completeStepUp, loginAccount, registerAccount, unlockAndPull } from '../../lib/auth';
+import { DEMO_GEO_PRESETS, demoGeoEnabled, getDemoGeo, setDemoGeo } from '../../lib/demo-geo';
 import { useKeystrokeCapture } from '../../lib/keystroke-capture';
 import { AuthFrame } from './AuthFrame';
 
@@ -26,6 +27,10 @@ export interface AuthenticatedSession {
   token: string | null;
   enrollment: EnrollmentStatus | null;
   vaultUnlocked: boolean;
+  /** This login's captured keystroke vector (durations only, never characters), kept in
+   *  memory for the gated inspector's live rhythm panel (ADR-0018). Null if not captured
+   *  (e.g. paste, or login without telemetry). Cleared when the session ends (on lock). */
+  keystrokeVector: number[] | null;
 }
 
 /** Why the unlock screen was shown again. 'risk' ⇒ a continuous-auth spike locked the vault. */
@@ -92,6 +97,60 @@ function DenyExplanation({ risk }: { risk: RiskExplanation }) {
   );
 }
 
+/**
+ * DEV/DEMO ONLY: pick a simulated login COUNTRY to drive the geovelocity ("impossible
+ * travel") signal on localhost (where every request shares one local IP and there's no
+ * GeoLite2 DB). Persisted in localStorage so the choice survives the lock → re-login
+ * cycle the demo needs: sign in once from one country to set the "previous location",
+ * then from a distant one to spike the hop. Never rendered in a production build
+ * (demoGeoEnabled() is false there) and the server ignores the header outside dev.
+ */
+function DemoGeoControl() {
+  const [geo, setGeo] = useState<string | null>(() => getDemoGeo());
+  const choose = (country: string | null): void => {
+    setDemoGeo(country);
+    setGeo(country);
+  };
+  return (
+    <div className="mt-5 rounded-xl border border-line2 bg-white/[0.02] p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted2">
+          Demo · simulated location
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            choose(null);
+          }}
+          className="text-[11px] text-muted2 hover:text-fg"
+        >
+          {geo === null ? 'off' : 'turn off'}
+        </button>
+      </div>
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
+        {DEMO_GEO_PRESETS.map((country) => (
+          <button
+            key={country}
+            type="button"
+            onClick={() => {
+              choose(country);
+            }}
+            className={cn(
+              'rounded-md border px-2.5 py-1 font-mono text-[12px] transition-colors',
+              geo === country ? 'border-accent bg-accent/15 text-accent-hi' : 'border-line2 text-muted hover:text-fg',
+            )}
+          >
+            {country}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2.5 text-[11px] leading-[1.4] text-faint">
+        Sign in from one country, then a distant one, to spike impossible travel. Dev builds only.
+      </p>
+    </div>
+  );
+}
+
 /** What `finishGranted` needs to open + pull-sync the local vault after a grant. */
 interface UnlockContext {
   masterPassword: string;
@@ -100,6 +159,9 @@ interface UnlockContext {
   /** The account's username — scopes the LOCAL vault file per account (so accounts on
    *  one machine don't collide on a single shared vault). */
   username: string;
+  /** This login's captured keystroke vector (durations only), carried through a step-up
+   *  so the granted session can hand it to the inspector's live rhythm panel (ADR-0018). */
+  keystrokeVector: number[] | null;
 }
 
 /** A single requirement row in the master-password checklist. */
@@ -208,7 +270,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
     }
     setChallengeToken(null);
     clearSecrets();
-    onAuthenticated({ token: session.sessionToken, enrollment, vaultUnlocked });
+    onAuthenticated({ token: session.sessionToken, enrollment, vaultUnlocked, keystrokeVector: ctx.keystrokeVector });
   };
 
   const doRegister = async (): Promise<void> => {
@@ -233,6 +295,7 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
       kdfSalt: outcome.kdfSalt,
       kdfParams: outcome.kdfParams,
       username,
+      keystrokeVector: features,
     };
     if (outcome.kind === 'granted') {
       await finishGranted(outcome.session, ctx);
@@ -471,6 +534,9 @@ export function AuthScreen({ onAuthenticated, lockNotice = null }: AuthScreenPro
           {busy ? (isRegister ? 'Creating vault…' : 'Logging in…') : isRegister ? 'Create vault' : 'Log in'}
         </Button>
       </form>
+
+      {/* DEV/DEMO ONLY: simulate a login location to demonstrate geovelocity. */}
+      {!isRegister && demoGeoEnabled() && <DemoGeoControl />}
 
       <div className="mt-[18px] text-center text-[13px] text-muted2">
         {isRegister ? 'Have an account? ' : 'New here? '}

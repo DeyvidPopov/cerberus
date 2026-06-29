@@ -88,11 +88,6 @@ function toRecord(row: RiskEventRow): RiskEventRecord {
   };
 }
 
-export interface PreviousLocation {
-  country: string;
-  atMs: number;
-}
-
 export function createRiskEventsRepository(db: Db) {
   return {
     /**
@@ -128,23 +123,6 @@ export function createRiskEventsRepository(db: Db) {
         throw new Error('risk_events insert returned no row');
       }
       return { id: row.id };
-    },
-
-    /**
-     * The user's most recent resolved login country + time, for the geovelocity
-     * "previous location" (scoped to user_id). Null if there is no prior fix.
-     */
-    async findPreviousLocation(userId: string): Promise<PreviousLocation | null> {
-      const result = await db.query<{ geo_country: string; occurred_at: Date }>(
-        `SELECT geo_country, occurred_at
-         FROM risk_events
-         WHERE user_id = $1 AND geo_country IS NOT NULL
-         ORDER BY occurred_at DESC
-         LIMIT 1`,
-        [userId],
-      );
-      const row = result.rows[0];
-      return row ? { country: row.geo_country, atMs: row.occurred_at.getTime() } : null;
     },
 
     /** The user's risk events, newest first (scoped to user_id). */

@@ -10,16 +10,17 @@
 // replacing the vault, with a clear "Back to vault" control. Gating is server-enforced
 // (GET /risk/events → 403 unless step-up-confirmed); the live WS score stream is gated
 // the same way. Simulate/Spike act only in ILLUSTRATIVE mode.
+import { keystrokeRhythmFromVector, type KeystrokeRhythm } from '@cerberus/shared-types';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ApiError, elevateStepUp, getRiskEvents } from '../../lib/api';
+import { ApiError, elevateStepUp, getKeystrokeRhythm, getRiskEvents } from '../../lib/api';
 import { attachMouseCapture } from '../../lib/mouse-capture';
 import { openContinuousAuth, type ContinuousAuthClient } from '../../lib/ws';
 import { Gauge, Monitor, Rhythm } from './charts';
 import { Icon, IconBox, Mark } from './icons';
 import { calmMonitor, ENROLLED, initialMonitor, makeIllustrativeAttempt, monitorStep } from './illustrative';
 import { liveEventToAttempt } from './live';
-import { BAND_META, type Attempt, type Band } from './model';
+import { BAND_META, type Attempt, type Band, type KsRhythm } from './model';
 import { C, FONT_DISPLAY, FONT_MONO, FONT_SANS, hexA } from './theme';
 
 type Mode = 'live' | 'illustrative';
@@ -27,13 +28,42 @@ type LiveLoad = 'loading' | 'ok' | 'forbidden' | 'error';
 
 interface RiskDashboardProps {
   token: string;
+  /** This sign-in's REAL captured keystroke vector (durations only), or null. Held only
+   *  in memory; drives panel 3's live "baseline vs current" rhythm (ADR-0018). */
+  keystrokeVector: number[] | null;
   /** Return to the vault (this view is a full-screen screen, not an overlay). */
   onClose: () => void;
 }
 
 const ILLUSTRATIVE_BANDS: Band[] = ['grant', 'grant', 'stepup', 'grant', 'deny'];
 
-export function RiskDashboard({ token, onClose }: RiskDashboardProps) {
+/** Build the live current rhythm from this sign-in's vector, with deviation vs the real
+ *  baseline driving the flag + "Δ baseline" readout. Null if absent or a dimension
+ *  mismatch (e.g. a different-length password) — the panel then falls back to illustrative. */
+function liveCurrentRhythm(vector: number[] | null, baseline: KeystrokeRhythm | null): KsRhythm | null {
+  if (vector === null || baseline === null) {
+    return null;
+  }
+  const r = keystrokeRhythmFromVector(vector);
+  if (r === null || r.hold.length !== baseline.hold.length) {
+    return null;
+  }
+  let sumDev = 0;
+  let maxDev = 0;
+  let flagIdx = 0;
+  for (let i = 0; i < r.hold.length; i += 1) {
+    const b = baseline.hold[i] ?? 0;
+    const dev = b > 0 ? Math.abs((r.hold[i] ?? 0) - b) / b : 0;
+    sumDev += dev;
+    if (dev > maxDev) {
+      maxDev = dev;
+      flagIdx = i;
+    }
+  }
+  return { hold: r.hold, flight: r.flight, flagIdx, avgDev: r.hold.length > 0 ? sumDev / r.hold.length : 0 };
+}
+
+export function RiskDashboard({ token, keystrokeVector, onClose }: RiskDashboardProps) {
   const [mode, setMode] = useState<Mode>('live');
   const [events, setEvents] = useState<Attempt[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
@@ -43,6 +73,10 @@ export function RiskDashboard({ token, onClose }: RiskDashboardProps) {
   const [monScored, setMonScored] = useState(false);
   const [locked, setLocked] = useState(false);
   const [spikeMode, setSpikeMode] = useState(false);
+  // The caller's OWN enrolled keystroke baseline (durations only) for panel 3's live
+  // rhythm. Fetched once the session is step-up-confirmed (ADR-0018). Null = no active
+  // baseline (still enrolling) → the panel falls back to the illustrative overlay.
+  const [baselineRhythm, setBaselineRhythm] = useState<KeystrokeRhythm | null>(null);
 
   const seq = useRef(2048);
   const nowSec = useRef(52380);
@@ -86,6 +120,28 @@ export function RiskDashboard({ token, onClose }: RiskDashboardProps) {
       clearInterval(poll);
     };
   }, [mode, loadLive]);
+
+  // LIVE: once the session is step-up-confirmed (events loaded ok), fetch the user's OWN
+  // enrolled keystroke baseline rhythm for panel 3. Best-effort: on any failure the panel
+  // simply falls back to the illustrative overlay (ADR-0018).
+  useEffect(() => {
+    if (mode !== 'live' || liveLoad !== 'ok') {
+      return;
+    }
+    let cancelled = false;
+    void getKeystrokeRhythm(token)
+      .then((res) => {
+        if (!cancelled) {
+          setBaselineRhythm(res.rhythm);
+        }
+      })
+      .catch(() => {
+        /* keep illustrative fallback */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, liveLoad, token]);
 
   // ---------- LIVE: the real continuous-auth mouse stream (panel 4) ----------
   // Only a step-up-confirmed session receives `score` messages (server-gated); a
@@ -211,6 +267,33 @@ export function RiskDashboard({ token, onClose }: RiskDashboardProps) {
   // ---------- derived render values ----------
   const cur = useMemo(() => events.find((e) => e.id === currentId) ?? events[0] ?? null, [events, currentId]);
   const isIllustrative = mode === 'illustrative';
+  // Panel 3 goes LIVE only in LIVE mode when BOTH the real baseline and this sign-in's
+  // real vector are present (and dimensions agree); otherwise it stays illustrative.
+  const liveCurrent = useMemo(
+    () => (isIllustrative ? null : liveCurrentRhythm(keystrokeVector, baselineRhythm)),
+    [isIllustrative, keystrokeVector, baselineRhythm],
+  );
+  const liveBase = useMemo<KsRhythm | null>(
+    () =>
+      !isIllustrative && baselineRhythm !== null && liveCurrent !== null
+        ? { hold: baselineRhythm.hold, flight: baselineRhythm.flight, flagIdx: 0, avgDev: 0 }
+        : null,
+    [isIllustrative, baselineRhythm, liveCurrent],
+  );
+  // In LIVE mode but unable to show real data, say WHY (so the illustrative fallback isn't
+  // a mystery). Null when in illustrative mode, or when the live panel is actually showing.
+  const liveUnavailable = useMemo<string | null>(() => {
+    if (isIllustrative || (liveBase !== null && liveCurrent !== null)) {
+      return null;
+    }
+    if (baselineRhythm === null) {
+      return 'no enrolled rhythm yet';
+    }
+    if (keystrokeVector === null) {
+      return 'type, don’t paste';
+    }
+    return 'unavailable this sign-in';
+  }, [isIllustrative, liveBase, liveCurrent, baselineRhythm, keystrokeVector]);
   const showForbidden = mode === 'live' && liveLoad === 'forbidden';
   // LIVE with nothing to show → a clear empty state, NEVER a fabricated 0.00 gauge.
   const showEmptyLive = mode === 'live' && !showForbidden && events.length === 0;
@@ -234,7 +317,7 @@ export function RiskDashboard({ token, onClose }: RiskDashboardProps) {
               <SignalBreakdown attempt={cur} />
             </div>
             <div style={rowStyle(230)}>
-              <KeystrokeRhythm attempt={cur} />
+              <KeystrokeRhythm attempt={cur} liveBase={liveBase} liveCurrent={liveCurrent} liveUnavailable={liveUnavailable} />
               <SessionMonitor
                 pts={monitor}
                 locked={locked}
@@ -631,18 +714,44 @@ function SignalBreakdown({ attempt }: { attempt: Attempt | null }) {
 // ===========================================================================
 // Panel 3 — Keystroke rhythm (ALWAYS illustrative; labelled — ADR-0002)
 // ===========================================================================
-function KeystrokeRhythm({ attempt }: { attempt: Attempt | null }) {
-  const ks = attempt?.ks ?? ENROLLED;
+function KeystrokeRhythm({
+  attempt,
+  liveBase,
+  liveCurrent,
+  liveUnavailable,
+}: {
+  attempt: Attempt | null;
+  liveBase: KsRhythm | null;
+  liveCurrent: KsRhythm | null;
+  /** In LIVE mode but can't show real data: the reason (e.g. "type, don’t paste"), else null. */
+  liveUnavailable: string | null;
+}) {
+  // LIVE when we have BOTH the real baseline and this sign-in's real vector; else the
+  // honest illustrative overlay (ADR-0018 / ADR-0002).
+  const live = liveBase !== null && liveCurrent !== null;
+  const base = live ? liveBase : ENROLLED;
+  const ks = live ? liveCurrent : (attempt?.ks ?? ENROLLED);
   const devPct = Math.round((ks.avgDev ?? 0) * 100);
   const flagged = (ks.avgDev ?? 0) > 0.2;
-  const keyTicks = Array.from({ length: 10 }).map((_v, i) => `K${String(i + 1).padStart(2, '0')}`);
+  const keyTicks = Array.from({ length: base.hold.length }).map((_v, i) => `K${String(i + 1).padStart(2, '0')}`);
   return (
     <div style={{ ...panelStyle, flex: '1.3 1 420px', minWidth: 320, padding: '16px 20px 14px' }}>
       <div style={panelHeadRow}>
         <span style={panelTitle}>KEYSTROKE RHYTHM · BASELINE vs CURRENT</span>
-        <span style={illChip}>
-          <IconBox name="info" size={11} sw={2} /> illustrative — simulated data
-        </span>
+        {live ? (
+          <span style={liveChip}>
+            <IconBox name="activity" size={11} sw={2} /> live · your keystrokes
+          </span>
+        ) : liveUnavailable !== null ? (
+          // In LIVE mode but no real rhythm to show — say why, so the fallback isn't a mystery.
+          <span style={illChip} title={`Live rhythm unavailable: ${liveUnavailable}. Showing an illustrative example.`}>
+            <IconBox name="info" size={11} sw={2} /> illustrative · {liveUnavailable}
+          </span>
+        ) : (
+          <span style={illChip}>
+            <IconBox name="info" size={11} sw={2} /> illustrative — simulated data
+          </span>
+        )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 9, flexWrap: 'wrap' }}>
         <LegendDash color="#5A616C" dashed text="Enrolled baseline" />
@@ -654,7 +763,7 @@ function KeystrokeRhythm({ attempt }: { attempt: Attempt | null }) {
         </span>
       </div>
       <div style={{ flex: 1, marginTop: 6, minHeight: 0 }}>
-        <Rhythm base={ENROLLED} ks={ks} />
+        <Rhythm base={base} ks={ks} />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 2px', marginTop: 2 }}>
         {keyTicks.map((k) => (
@@ -1077,6 +1186,13 @@ const illChip: React.CSSProperties = {
   background: 'rgba(232,144,67,0.12)',
   border: '1px solid rgba(232,144,67,0.28)',
   whiteSpace: 'nowrap',
+};
+// LIVE variant of the panel chip — green, for real "baseline vs current" data (ADR-0018).
+const liveChip: React.CSSProperties = {
+  ...illChip,
+  color: C.grantHi,
+  background: 'rgba(91,191,146,0.12)',
+  border: '1px solid rgba(91,191,146,0.30)',
 };
 const lockOverlayStyle: React.CSSProperties = {
   position: 'absolute',

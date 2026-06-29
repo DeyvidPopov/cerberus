@@ -1,0 +1,21 @@
+-- 0007_session_login_location.sql
+-- Project Cerberus — anchor the geovelocity "previous location" to CONFIRMED logins.
+-- Forward-only — do not edit after it has run anywhere.
+--
+-- The geovelocity ("impossible travel") signal compares the current login's country
+-- against the user's last KNOWN location. Sourcing that baseline from any risk-evaluated
+-- attempt (the old behaviour) let a DENIED or un-passed step-up attempt — still a real
+-- attempt carrying the correct auth key — move the baseline. That made the signal
+-- one-shot: an attacker who holds the password could spend one throwaway denied attempt
+-- to plant their own location as the baseline, after which a repeat from the same place
+-- showed zero geovelocity. The baseline must instead be the location of the last login
+-- where a SESSION was actually issued (a direct grant, a newcomer bootstrap grant, or a
+-- PASSED step-up) — i.e. confirmed presence, not a mere attempt.
+--
+-- To support that, record the coarse login COUNTRY on each issued session, and carry it
+-- on the step-up challenge so a session issued after a passed step-up records the same
+-- location. ISO country only — never precise coordinates (PROJECT.md §5, ADR-0011).
+-- Nullable: a login with no resolvable geo (no GeoIP DB and no demo override) issues a
+-- session with NULL country, which the baseline lookup simply skips (cold-start neutral).
+ALTER TABLE sessions           ADD COLUMN geo_country TEXT;
+ALTER TABLE step_up_challenges ADD COLUMN geo_country TEXT;

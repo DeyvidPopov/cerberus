@@ -52,6 +52,30 @@ dynamics; a risk spike locks the vault). Bachelor thesis (FDIBA). Stack: Tauri +
   → `async` + `spawn_blocking`) so register/login no longer freeze the UI; (2) registration shows
   distinct messages (409 username-taken etc.) instead of the raw "request failed"; (3) a 5xx
   server fault now maps to a distinct "server problem" message instead of the generic fallback.
+- **Post-M12 hardening + live inspector (latest session, ADR-0016/0017/0018):**
+  - **(1) Geovelocity baseline = last CONFIRMED login** (ADR-0016). The "previous location" now
+    comes from the latest *issued session* (grant / bootstrap / passed step-up), not any
+    password-correct attempt. A denied or un-passed step-up no longer poisons the baseline, so an
+    attacker holding the password can't neutralise the impossible-travel signal with a throwaway
+    attempt; a passed step-up still advances it so a genuine traveller settles. Migration **0007**
+    adds coarse `geo_country` to `sessions` + `step_up_challenges` (country only; ADR-0002 §5).
+  - **(2) Device trust is EARNED** (ADR-0017). A returning device with confirmed logins on **≥5
+    distinct UTC days** graduates known-untrusted (0.3) → known-trusted (0), making the
+    previously-dead trusted tier reachable. Distinct days (not volume), confirmed logins only, not
+    elapsed time. No migration (uses the existing `devices.trusted` column); no trust UI/revocation
+    yet (follow-up).
+  - **(3) Live keystroke rhythm in the inspector** (ADR-0018). Panel 3 can show the user's REAL
+    enrolled baseline vs this sign-in's REAL captured rhythm via a new `GET /risk/keystroke-rhythm`
+    (durations only). A **deliberate, scoped, reversible relaxation of ADR-0002** — gated to a
+    step-up-confirmed *self* session AND **non-production only** (unmounted = 404 in prod). Falls
+    back to an honestly-labelled illustrative overlay otherwise, naming the reason in-panel
+    ("type, don't paste" / "no enrolled rhythm yet"). Adversarially reviewed (multi-agent): no
+    confirmed defects.
+  - **(4) UX:** rhythm enrolment now starts at 0 (purges the passively-buffered login sample on the
+    first deliberate capture; skipping still preserves passive learning); the vault enrolment
+    banner refreshes after onboarding; inspector chart axes auto-scale to real data; a **dev-only
+    `X-Demo-Geo` override** (desktop control + non-production CORS allowance) demonstrates
+    geovelocity on localhost.
 
 ### Headline evaluation numbers (reproducible — `npm run eval:*`, docs/evaluation/)
 
@@ -77,6 +101,11 @@ and continuous auth smooths windows (EWMA) before locking.
 - 0013 continuous auth: mouse dynamics, windowed WS streaming, spike→lock (modality reuse)
 - 0014 evaluation methodology: Balabit mouse benchmark, operating-point tuning, integrated study
 - 0015 UI design system ("Vault"): shadcn/ui + Tailwind tokens, no-risk-detail copy rule
+- 0016 geovelocity baseline = last CONFIRMED login (issued session), not any attempt — closes
+  denied-attempt baseline poisoning (migration 0007: sessions/step_up_challenges `geo_country`)
+- 0017 device trust EARNED by confirmed logins on N distinct days (known-untrusted → trusted)
+- 0018 live keystroke rhythm in the gated inspector — SCOPED, non-production relaxation of
+  ADR-0002 (self + step-up + durations only; new `GET /risk/keystroke-rhythm`)
 
 ## Local dev / ops notes (so a fresh environment works)
 
@@ -85,7 +114,8 @@ and continuous auth smooths windows (EWMA) before locking.
   Tests use `TEST_DATABASE_URL` on `:5433` (ephemeral DBs, always fully migrated).
 - **Run `npm run migrate` after pulling schema changes.** A stale dev DB missing a migration shows
   up as a **500 on the affected endpoint** (this bit us: the dev DB lacked migration 0005's
-  `modality` column → every login 500'd). Forward-only; never edit an applied migration.
+  `modality` column → every login 500'd). Forward-only; never edit an applied migration. **Latest:
+  0007** (`sessions`/`step_up_challenges` `geo_country`, ADR-0016) — 7 migrations total.
 - **Evaluation datasets are fetched + gitignored** under `docs/evaluation/data/` (CMU keystroke;
   Balabit mouse — `git clone` the challenge repo). Scripts: `eval:keystroke`, `eval:mouse`,
   `eval:tune`, `eval:integrated` (in `@cerberus/server`). Derived results ARE committed.
@@ -114,3 +144,12 @@ and continuous auth smooths windows (EWMA) before locking.
   credentials, a QR image on TOTP setup (setup key + URI shown instead), vault search/categories.
 - npm audit advisories are dev-only build tooling (vite/vitest/jsdom), deferred — documented.
 - Conflict handling is blob-level (revision 409), not field-level merge — future work (ADR-0008).
+- **Device trust (ADR-0017) has no explicit "trust/untrust this device" UI and no revocation** —
+  trust is auto-earned + monotonic only. Candidate follow-up if device management becomes a feature.
+- **Live-rhythm inspector (ADR-0018) is demo/non-production only** (unmounted in prod). The chart's
+  "flight" is the *down-to-down* interval (display choice; always positive); could switch to the
+  textbook *up-to-down* "flight time". Optional: **block paste on the login master-password field**
+  (like the enrolment screen) so a paste doesn't silently suppress behavioral telemetry + the live
+  rhythm (trade-off vs. password-manager users).
+- A behavioral baseline can't be exercised live in a demo without **typing** the master password —
+  paste/autofill taints the capture (no rhythm), shows "missing sample" + a fail-closed step-up.

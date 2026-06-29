@@ -6,6 +6,7 @@
 // key; the master password and encryption key never leave the Rust core.
 import {
   EnrollmentStatusSchema,
+  KeystrokeRhythmResponseSchema,
   LoginResponseSchema,
   PreloginResponseSchema,
   RegisterResponseSchema,
@@ -22,6 +23,7 @@ import {
   type CreateVaultItemRequest,
   type EnrollmentSampleRequest,
   type EnrollmentStatus,
+  type KeystrokeRhythmResponse,
   type LoginRequest,
   type LoginResponse,
   type PreloginRequest,
@@ -42,6 +44,8 @@ import {
   type VaultMutationResponse,
 } from '@cerberus/shared-types';
 import type { ZodType } from 'zod';
+
+import { getDemoGeo } from './demo-geo';
 
 const DEFAULT_BASE_URL = 'http://localhost:8080';
 
@@ -67,10 +71,15 @@ export function apiBaseUrl(): string {
   return baseUrl();
 }
 
-async function postJson<T>(path: string, body: unknown, schema: ZodType<T>): Promise<T> {
+async function postJson<T>(
+  path: string,
+  body: unknown,
+  schema: ZodType<T>,
+  extraHeaders: Record<string, string> = {},
+): Promise<T> {
   const response = await fetch(`${baseUrl()}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...extraHeaders },
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -97,7 +106,12 @@ export async function prelogin(req: PreloginRequest): Promise<PreloginResponse> 
 }
 
 export async function login(req: LoginRequest): Promise<LoginResponse> {
-  return postJson('/auth/login', req, LoginResponseSchema);
+  // DEV/DEMO ONLY: simulate this login's country for the geovelocity ("impossible
+  // travel") signal. Null (no header) in production builds, where the server ignores
+  // it anyway. The master password / keys are unaffected — only a coarse country code.
+  const demoGeo = getDemoGeo();
+  const headers: Record<string, string> = demoGeo !== null ? { 'x-demo-geo': demoGeo } : {};
+  return postJson('/auth/login', req, LoginResponseSchema, headers);
 }
 
 /** POST /auth/step-up/verify — complete a step-up with a TOTP code (→ a granted session). */
@@ -202,6 +216,15 @@ export async function getRiskEvents(
   }
   const qs = params.toString();
   return authed('GET', `/risk/events${qs.length > 0 ? `?${qs}` : ''}`, token, RiskEventsResponseSchema);
+}
+
+/**
+ * GET /risk/keystroke-rhythm — the caller's OWN enrolled keystroke baseline rhythm
+ * (hold/flight durations) for the inspector's live "baseline vs current" panel. Same
+ * step-up gate as /risk/events; durations only, never characters (ADR-0018).
+ */
+export async function getKeystrokeRhythm(token: string): Promise<KeystrokeRhythmResponse> {
+  return authed('GET', '/risk/keystroke-rhythm', token, KeystrokeRhythmResponseSchema);
 }
 
 /**

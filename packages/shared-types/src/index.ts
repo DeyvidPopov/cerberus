@@ -333,6 +333,23 @@ export const RiskEventsResponseSchema = z.object({
 });
 export type RiskEventsResponse = z.infer<typeof RiskEventsResponseSchema>;
 
+/** A display keystroke rhythm (hold + flight durations). Biometric-adjacent — ADR-0018. */
+export const KeystrokeRhythmSchema = z.object({
+  hold: z.array(z.number().finite()),
+  flight: z.array(z.number().finite()),
+});
+
+/**
+ * GET /risk/keystroke-rhythm — the CALLER'S OWN enrolled keystroke baseline rhythm, or
+ * null if no active keystroke baseline. Gated to a step-up-confirmed session and scoped
+ * to self (ADR-0018). Durations only; never characters/password. A deliberate, scoped
+ * relaxation of ADR-0002's "model never returned over the API" for the demo inspector.
+ */
+export const KeystrokeRhythmResponseSchema = z.object({
+  rhythm: KeystrokeRhythmSchema.nullable(),
+});
+export type KeystrokeRhythmResponse = z.infer<typeof KeystrokeRhythmResponseSchema>;
+
 // ---------------------------------------------------------------------------
 // Encrypted blob sync (Milestone 5). ADR-0005 (wire format), ADR-0008 (sync).
 //

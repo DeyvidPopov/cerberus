@@ -16,6 +16,7 @@ vi.mock('../../lib/api', async (importActual) => ({
   ...(await importActual<typeof import('../../lib/api')>()),
   getRiskEvents: vi.fn(),
   elevateStepUp: vi.fn(),
+  getKeystrokeRhythm: vi.fn(),
 }));
 vi.mock('../../lib/ws', () => ({
   openContinuousAuth: vi.fn((_token: string, handlers: WsHandlers) => {
@@ -27,7 +28,7 @@ vi.mock('../../lib/mouse-capture', () => ({
   attachMouseCapture: vi.fn(() => () => undefined),
 }));
 
-import { ApiError, elevateStepUp, getRiskEvents } from '../../lib/api';
+import { ApiError, elevateStepUp, getKeystrokeRhythm, getRiskEvents } from '../../lib/api';
 import { RiskDashboard } from './RiskDashboard';
 
 function makeEvent(id: string, composite: number, band: 'grant' | 'step_up' | 'deny', action: string): RiskEvent {
@@ -91,6 +92,8 @@ const onClose = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   wsHolder.handlers = null;
+  // Default: no enrolled baseline → panel 3 stays illustrative. Feature tests override.
+  vi.mocked(getKeystrokeRhythm).mockResolvedValue({ rhythm: null });
 });
 afterEach(() => {
   cleanup();
@@ -103,7 +106,7 @@ describe('RiskDashboard — LIVE mode from gated /risk/events', () => {
       limit: 25,
       offset: 0,
     });
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
 
     // LIVE is the default: the LIVE toggle, the gated badge, and the real-telemetry banner.
     await waitFor(() => {
@@ -127,9 +130,51 @@ describe('RiskDashboard — LIVE mode from gated /risk/events', () => {
     expect(screen.getByText('ACCESS DENIED')).toBeTruthy();
   });
 
+  it('panel 3 goes LIVE with the real baseline + this sign-in’s real vector (ADR-0018)', async () => {
+    vi.mocked(getRiskEvents).mockResolvedValue({
+      events: [makeEvent('ev-grant', 0.1, 'grant', 'granted')],
+      limit: 25,
+      offset: 0,
+    });
+    // A real enrolled baseline (11 holds, 10 flights) for the step-up-confirmed session.
+    vi.mocked(getKeystrokeRhythm).mockResolvedValue({
+      rhythm: {
+        hold: [112, 96, 128, 90, 120, 104, 132, 94, 116, 100, 108],
+        flight: [150, 92, 164, 78, 124, 148, 84, 112, 98, 134],
+      },
+    });
+    // This sign-in's real captured vector (3n−2 = 31 for n=11): [holds(11), DD(10), UD(10)].
+    const vector = Array.from({ length: 31 }, (_v, i) => 100 + (i % 11) * 7);
+    render(<RiskDashboard token="tok" keystrokeVector={vector} onClose={onClose} />);
+
+    // The panel flips from the illustrative chip to the LIVE chip — real, not simulated.
+    await waitFor(() => {
+      expect(screen.getByText(/live · your keystrokes/iu)).toBeTruthy();
+    });
+    expect(screen.queryByText(/illustrative — simulated data/iu)).toBeNull();
+  });
+
+  it('panel 3 falls back with a REASON when there is no enrolled baseline (still enrolling)', async () => {
+    vi.mocked(getRiskEvents).mockResolvedValue({
+      events: [makeEvent('ev-grant', 0.1, 'grant', 'granted')],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(getKeystrokeRhythm).mockResolvedValue({ rhythm: null }); // still enrolling
+    const vector = Array.from({ length: 31 }, (_v, i) => 100 + i);
+    render(<RiskDashboard token="tok" keystrokeVector={vector} onClose={onClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Access granted')).toBeTruthy();
+    });
+    // LIVE mode but no baseline → illustrative fallback, and it SAYS why.
+    expect(screen.getByText(/illustrative · no enrolled rhythm yet/iu)).toBeTruthy();
+    expect(screen.queryByText(/live · your keystrokes/iu)).toBeNull();
+  });
+
   it('SIGNAL BREAKDOWN renders the backend’s own weights, contributions and reasons (no synthesis)', async () => {
     vi.mocked(getRiskEvents).mockResolvedValue({ events: [richStepUpEvent()], limit: 25, offset: 0 });
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
 
     await waitFor(() => {
       expect(screen.getByText('STEP-UP REQUIRED')).toBeTruthy();
@@ -144,18 +189,21 @@ describe('RiskDashboard — LIVE mode from gated /risk/events', () => {
     expect(screen.getByText(/first seen device/iu)).toBeTruthy();
   });
 
-  it('PANEL 3 (keystroke rhythm) stays labelled illustrative even in LIVE mode', async () => {
+  it('panel 3 falls back with "type, don’t paste" when this sign-in captured no rhythm (LIVE mode)', async () => {
     vi.mocked(getRiskEvents).mockResolvedValue({
       events: [makeEvent('ev-1', 0.2, 'grant', 'granted')],
       limit: 25,
       offset: 0,
     });
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    // A real baseline EXISTS, but no keystroke vector was captured this sign-in (e.g. a paste).
+    vi.mocked(getKeystrokeRhythm).mockResolvedValue({ rhythm: { hold: [110, 100, 120], flight: [150, 90] } });
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
     await waitFor(() => {
       expect(screen.getByText('Access granted')).toBeTruthy();
     });
-    // The keystroke-rhythm panel carries its own persistent illustrative label.
-    expect(screen.getByText('illustrative — simulated data')).toBeTruthy();
+    // Honest reason, not a mysterious "simulated data" label — and never falsely "live".
+    expect(screen.getByText(/illustrative · type/iu)).toBeTruthy();
+    expect(screen.queryByText(/live · your keystrokes/iu)).toBeNull();
     expect(screen.getByText(/characters never captured/iu)).toBeTruthy();
   });
 
@@ -165,7 +213,7 @@ describe('RiskDashboard — LIVE mode from gated /risk/events', () => {
       limit: 25,
       offset: 0,
     });
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
     await waitFor(() => {
       expect(screen.getByText('Access granted')).toBeTruthy();
     });
@@ -189,7 +237,7 @@ describe('RiskDashboard — LIVE mode from gated /risk/events', () => {
 describe('RiskDashboard — LIVE empty state', () => {
   it('shows a clear empty state (no fabricated gauge) when there are no events', async () => {
     vi.mocked(getRiskEvents).mockResolvedValue({ events: [], limit: 25, offset: 0 });
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
 
     await waitFor(() => {
       expect(screen.getByText(/No attempts recorded yet/iu)).toBeTruthy();
@@ -203,7 +251,7 @@ describe('RiskDashboard — LIVE empty state', () => {
 describe('RiskDashboard — gating', () => {
   it('a non-step-up session (403) shows the gated notice with a TOTP entry, no live data', async () => {
     vi.mocked(getRiskEvents).mockRejectedValue(new ApiError(403, 'step_up_required'));
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
     await waitFor(() => {
       expect(screen.getByText(/Additional verification needed/iu)).toBeTruthy();
     });
@@ -220,7 +268,7 @@ describe('RiskDashboard — gating', () => {
       .mockRejectedValueOnce(new ApiError(403, 'step_up_required'))
       .mockResolvedValue({ events: [makeEvent('ev-1', 0.1, 'grant', 'granted')], limit: 25, offset: 0 });
     vi.mocked(elevateStepUp).mockResolvedValue({ status: 'confirmed' });
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
 
     await waitFor(() => {
       expect(screen.getByLabelText('Authenticator code')).toBeTruthy();
@@ -238,7 +286,7 @@ describe('RiskDashboard — gating', () => {
   it('a wrong TOTP code shows a generic error and stays gated (fail closed)', async () => {
     vi.mocked(getRiskEvents).mockRejectedValue(new ApiError(403, 'step_up_required'));
     vi.mocked(elevateStepUp).mockRejectedValue(new ApiError(401, 'invalid_code'));
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
 
     await waitFor(() => {
       expect(screen.getByLabelText('Authenticator code')).toBeTruthy();
@@ -262,7 +310,7 @@ describe('RiskDashboard — mode toggle & illustrative labelling', () => {
       limit: 25,
       offset: 0,
     });
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
     await waitFor(() => {
       expect(screen.getByText(/real telemetry/iu)).toBeTruthy();
     });
@@ -276,6 +324,9 @@ describe('RiskDashboard — mode toggle & illustrative labelling', () => {
     });
     // … and the LIVE telemetry banner is GONE (simulated data is never labelled live).
     expect(screen.queryByText(/real telemetry/iu)).toBeNull();
+    // In ILLUSTRATIVE mode the panel-3 chip is the plain illustrative label (no live reason).
+    expect(screen.getByText('illustrative — simulated data')).toBeTruthy();
+    expect(screen.queryByText(/live · your keystrokes/iu)).toBeNull();
   });
 
   it('Simulate acts in ILLUSTRATIVE mode (switches in, injects a simulated attempt)', async () => {
@@ -284,7 +335,7 @@ describe('RiskDashboard — mode toggle & illustrative labelling', () => {
       limit: 25,
       offset: 0,
     });
-    render(<RiskDashboard token="tok" onClose={onClose} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={onClose} />);
     await waitFor(() => {
       expect(screen.getByText(/real telemetry/iu)).toBeTruthy();
     });
@@ -299,7 +350,7 @@ describe('RiskDashboard — mode toggle & illustrative labelling', () => {
   it('Back to vault triggers onClose', async () => {
     vi.mocked(getRiskEvents).mockResolvedValue({ events: [], limit: 25, offset: 0 });
     const close = vi.fn();
-    render(<RiskDashboard token="tok" onClose={close} />);
+    render(<RiskDashboard token="tok" keystrokeVector={null} onClose={close} />);
     await waitFor(() => {
       expect(screen.getByText(/No attempts recorded yet/iu)).toBeTruthy();
     });

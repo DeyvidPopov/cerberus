@@ -29,7 +29,7 @@ import { VaultView } from './VaultView';
 
 const onLock = vi.fn();
 
-const UNLOCKED = { token: 'tok', enrollment: null, vaultUnlocked: true } as const;
+const UNLOCKED = { token: 'tok', enrollment: null, vaultUnlocked: true, keystrokeVector: null } as const;
 const SUMMARIES: CredentialSummary[] = [
   { id: 'hulu', name: 'Hulu', username: 'scott@gmail.com', url: 'https://hulu.com', itemType: 'login', favourite: true, category: 'Streaming', hasOtp: true },
   { id: 'visa', name: 'Personal Visa', username: '', url: '', itemType: 'card', favourite: false, category: 'Important', hasOtp: false },
@@ -52,7 +52,7 @@ describe('VaultView — lock state honesty (single source of truth)', () => {
   it('keys NOT held → calm locked screen, no "Protected" pill, no credential query', () => {
     // The post-registration state: authenticated but vaultUnlocked: false.
     render(
-      <VaultView onLock={onLock} session={{ token: null, enrollment: null, vaultUnlocked: false }} />,
+      <VaultView onLock={onLock} session={{ token: null, enrollment: null, vaultUnlocked: false, keystrokeVector: null }} />,
     );
     // The locked screen — never the "Protected" (unlocked) pill.
     expect(screen.getByText('Your vault is locked')).toBeTruthy();
@@ -68,7 +68,7 @@ describe('VaultView — lock state honesty (single source of truth)', () => {
   it('keys held → "Protected" pill, queries credentials, no locked screen', async () => {
     vi.mocked(listCredentials).mockResolvedValue([]);
     render(
-      <VaultView onLock={onLock} session={{ token: 'tok', enrollment: null, vaultUnlocked: true }} />,
+      <VaultView onLock={onLock} session={{ token: 'tok', enrollment: null, vaultUnlocked: true, keystrokeVector: null }} />,
     );
     // Unlocked vault: the "Protected" status, the real list query, no locked screen.
     expect(screen.getByText('Protected')).toBeTruthy();

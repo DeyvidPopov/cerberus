@@ -26,6 +26,9 @@ below take precedence over speed or convenience.
   - 0013 continuous auth: mouse dynamics, windowed WS streaming, spike→lock (modality reuse)
   - 0014 evaluation methodology: Balabit mouse benchmark, operating-point tuning, integrated study
   - 0015 UI design system ("Vault" direction): shadcn/ui + Tailwind tokens, no-risk-detail copy rule
+  - 0016 geovelocity baseline = last CONFIRMED login (issued session), not any attempt
+  - 0017 device trust earned by confirmed logins on N distinct days (known-untrusted → trusted)
+  - 0018 live keystroke rhythm in the gated inspector — SCOPED relaxation of ADR-0002 (self only)
 - `docs/threat-model.md` — assets, adversaries, trust boundaries.
 
 ## Non-negotiable security invariants

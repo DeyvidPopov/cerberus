@@ -134,9 +134,25 @@ export function Monitor({ pts, locked, threshold = 0.75 }: { pts: number[]; lock
 export function Rhythm({ base, ks }: { base: KsRhythm; ks: KsRhythm }) {
   const n = base.hold.length;
   const W = 600;
-  const xOf = (i: number): number => 30 + i * ((W - 60) / (n - 1));
-  const holdY = (h: number): number => 92 - ((Math.max(60, Math.min(210, h)) - 60) / 150) * 68;
-  const flY = (f: number): number => 196 - ((Math.max(40, Math.min(220, f)) - 40) / 180) * 68;
+  const xOf = (i: number): number => 30 + i * ((W - 60) / Math.max(1, n - 1));
+  // Auto-scale each band to the ACTUAL data range (baseline + current) so REAL captured
+  // timings render with their true shape — a fixed range tuned for the illustrative demo
+  // values clamps real (e.g. slow, deliberate) typing flat against the ceiling. Each band
+  // is 68px tall (hold: y 92→24; flight: y 196→128). Padded so lines don't touch the edges;
+  // a degenerate (all-equal) series gets a small synthetic span and draws centred.
+  const scaleTo = (values: number[], yBottom: number, yTop: number): ((v: number) => number) => {
+    const finite = values.filter((v) => Number.isFinite(v));
+    let lo = finite.length > 0 ? Math.min(...finite) : 0;
+    let hi = finite.length > 0 ? Math.max(...finite) : 1;
+    const span = hi - lo;
+    const pad = span > 0 ? span * 0.12 : Math.max(1, Math.abs(hi) * 0.1);
+    lo -= pad;
+    hi += pad;
+    const range = hi - lo || 1;
+    return (v: number): number => yBottom - ((v - lo) / range) * (yBottom - yTop);
+  };
+  const holdY = scaleTo([...base.hold, ...ks.hold], 92, 24);
+  const flY = scaleTo([...base.flight, ...ks.flight], 196, 128);
   const mkLine = (arr: number[], fn: (v: number) => number, stroke: string, dash: string | null, w = 2): string => {
     let d = '';
     arr.forEach((val, i) => {

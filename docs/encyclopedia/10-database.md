@@ -161,13 +161,13 @@ shape never leaks upward.
   is JSONB; `pendingDimension` uses `jsonb_array_length(...)` to reject a sample whose dimension
   changed mid-enrollment.
 - **[`risk-events.ts`](../../apps/server/src/repositories/risk-events.ts)** — `insert`,
-  `findPreviousLocation` (last resolved country+time for geovelocity), `listByUser`,
-  `listByUserPaged` (the inspector page; `ORDER BY occurred_at DESC, id DESC` so pages don't overlap).
-  `NUMERIC` columns come back as strings → `Number(...)`.
-- **[`sessions.ts`](../../apps/server/src/repositories/sessions.ts)** — `create`, `markLocked`
-  (continuous-auth spike → status `'locked'`; idempotent), `markStepUpConfirmed`,
-  `findActiveByTokenHash` (filters `status='active' AND expires_at > now()`), `recentLoginHours`
-  (UTC hours of prior logins, for the time-of-day signal).
+  `listByUser`, `listByUserPaged` (the inspector page; `ORDER BY occurred_at DESC, id DESC` so
+  pages don't overlap). `NUMERIC` columns come back as strings → `Number(...)`.
+- **[`sessions.ts`](../../apps/server/src/repositories/sessions.ts)** — `create` (records the
+  login's coarse `geo_country`), `markLocked` (continuous-auth spike → status `'locked'`;
+  idempotent), `markStepUpConfirmed`, `findActiveByTokenHash` (filters `status='active' AND
+  expires_at > now()`), `findLatestLocation` (last CONFIRMED login's country — the geovelocity
+  baseline, ADR-0016), `recentLoginHours` (UTC hours of prior logins, for the time-of-day signal).
 - **[`login-failures.ts`](../../apps/server/src/repositories/login-failures.ts)** — `record`,
   `countRecentByUser`, `countRecentByIp`. Append-only; stores only an optional `user_id` and a
   **truncated** IP — never the attempted password or the full IP.

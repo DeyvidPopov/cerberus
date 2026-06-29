@@ -107,6 +107,36 @@ export function extractFeatureVector(keystrokes: readonly KeystrokeTiming[]): nu
   return [...holds, ...downDown, ...upDown];
 }
 
+/**
+ * A position-indexed keystroke rhythm for DISPLAY (the gated inspector, ADR-0018):
+ * per-key dwell (`hold`) and the down-to-down inter-key interval (`flight`). Derived
+ * from the documented feature-vector layout — durations only, never characters. This
+ * is biometric-adjacent; ADR-0018 permits returning it ONLY to the owning user's
+ * step-up-confirmed session (a deliberate, scoped relaxation of ADR-0002).
+ */
+export interface KeystrokeRhythm {
+  /** Per-key dwell times (ms), length n. */
+  hold: number[];
+  /** Down-to-down inter-key intervals (ms), length n−1. */
+  flight: number[];
+}
+
+/**
+ * Map a position-indexed feature vector to a display rhythm (`hold` = dwell times,
+ * `flight` = down-to-down intervals), or null if the length is not a valid 3n−2. Uses
+ * the SAME layout as `extractFeatureVector`, so capture (current) and the fitted mean
+ * (baseline) map identically. No character identity is read — only durations.
+ */
+export function keystrokeRhythmFromVector(vector: readonly number[]): KeystrokeRhythm | null {
+  const n = keystrokeCountFromDimension(vector.length);
+  if (n === null) {
+    return null;
+  }
+  const hold = vector.slice(0, n).map((v) => Math.round(v));
+  const flight = vector.slice(n, 2 * n - 1).map((v) => Math.round(v)); // down-to-down latencies
+  return { hold, flight };
+}
+
 // ---------------------------------------------------------------------------
 // Wire DTOs for the enrollment API (ADR-0009). Biometric-adjacent: durations
 // only. zod strips unknown keys, so a client cannot smuggle a character field

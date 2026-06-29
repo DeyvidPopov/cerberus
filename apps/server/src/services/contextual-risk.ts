@@ -7,7 +7,6 @@ import type { Pool } from 'pg';
 
 import { createDevicesRepository } from '../repositories/devices';
 import { createLoginFailuresRepository } from '../repositories/login-failures';
-import { createRiskEventsRepository } from '../repositories/risk-events';
 import { createSessionsRepository } from '../repositories/sessions';
 import type { ContextualConfig } from '../risk/config';
 import { countryCentroid } from '../risk/geo/centroids';
@@ -68,7 +67,6 @@ export function createContextualRiskService(deps: ContextualRiskServiceDeps) {
     async evaluate(input: ContextualRiskInput): Promise<ContextualEvaluation> {
       const devices = createDevicesRepository(pool);
       const sessions = createSessionsRepository(pool);
-      const riskEvents = createRiskEventsRepository(pool);
       const failures = createLoginFailuresRepository(pool);
 
       // --- new-device: `known` is authoritative from login-time enrollment
@@ -101,7 +99,11 @@ export function createContextualRiskService(deps: ContextualRiskServiceDeps) {
         geoCountry !== null && currCentroid !== null
           ? { country: geoCountry, centroid: currCentroid, atMs: input.now.getTime() }
           : null;
-      const prevLocation = await riskEvents.findPreviousLocation(input.userId);
+      // Previous location = the user's last CONFIRMED login (a session was issued), NOT
+      // any risk-evaluated attempt — so a denied / un-passed step-up cannot move the
+      // baseline (an attacker with the password can't neutralise the signal), while a
+      // grant or passed step-up at a new location still lets a genuine traveller settle.
+      const prevLocation = await sessions.findLatestLocation(input.userId);
       const prevCentroid = countryCentroid(prevLocation?.country);
       const prev: GeoFix | null =
         prevLocation !== null && prevCentroid !== null

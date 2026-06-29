@@ -1,11 +1,17 @@
 import type { Pool } from 'pg';
+import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createApp } from '../app';
 import type { ServerConfig } from '../config';
-import { enrolledActiveUser, loginReq, sampleVector } from '../test-support/auth';
+import { enrolledActiveUser, loginReq, sampleVector, seedConfirmedTotp, totpCode } from '../test-support/auth';
 import { testServerConfig } from '../test-support/config';
 import { createTestDb, type TestDb } from '../test-support/postgres';
+
+/** The geovelocity sub-score's structured reason (coarse country only). */
+function geoReason(row: RiskRow): Record<string, unknown> {
+  return (row.signals.geovelocity as { reason?: Record<string, unknown> }).reason ?? {};
+}
 
 interface RiskRow {
   signals: Record<string, unknown>;
@@ -64,6 +70,56 @@ describe('geovelocity — X-Demo-Geo override (non-production demo)', () => {
     const geo = row.signals.geovelocity as { reason?: Record<string, unknown> };
     expect(geo.reason?.currGeo).toBe('JP');
     expect(geo.reason?.prevGeo).toBe('US');
+  });
+
+  it('a DENIED / un-passed step-up does NOT move the baseline (no signal poisoning)', async () => {
+    // The geovelocity baseline must be the last CONFIRMED login (an issued session), not
+    // any password-correct attempt. An attacker who holds the password could otherwise
+    // burn the signal with one throwaway far-away attempt: it is denied / stepped-up, yet
+    // under the old rule it became the new "previous location", zeroing the next hop.
+    const app = createApp(pool, config);
+    const { acct, userId } = await enrolledActiveUser(app);
+    await seedConfirmedTotp(pool, config.baselineEncryptionKey, userId); // so a step-up is enforceable, not bootstrapped
+
+    // 1. Confirmed US login → a session is issued ⇒ baseline = US.
+    await loginReq(app, acct, { sample: sampleVector(3) }).set('X-Demo-Geo', 'US').expect(200);
+
+    // 2. A login from JAPAN is an impossible hop ⇒ step-up (or deny) — either way NO
+    //    session is issued. We deliberately do NOT pass the step-up.
+    const jp = await loginReq(app, acct, { sample: sampleVector(4) }).set('X-Demo-Geo', 'JP');
+    expect(jp.body.status).not.toBe('granted'); // step_up_required or denied — no session either way
+
+    // 3. Back from the US: the baseline is STILL US (the JP attempt left no session), so
+    //    this is normal travel — geovelocity stays neutral. (Under the old rule the JP
+    //    attempt would have poisoned the baseline and this would falsely spike.)
+    await loginReq(app, acct, { sample: sampleVector(5) }).set('X-Demo-Geo', 'US').expect(200);
+    const row = await latest(pool, userId);
+    expect(subScore(row, 'geovelocity')).toBe(0);
+    expect(geoReason(row).prevGeo).toBe('US');
+  });
+
+  it('a PASSED step-up advances the baseline so a genuine traveller settles', async () => {
+    const app = createApp(pool, config);
+    const { acct, userId } = await enrolledActiveUser(app);
+    const secret = await seedConfirmedTotp(pool, config.baselineEncryptionKey, userId);
+
+    // Confirmed US login → baseline = US.
+    await loginReq(app, acct, { sample: sampleVector(3) }).set('X-Demo-Geo', 'US').expect(200);
+
+    // Travel to JAPAN: impossible-travel ⇒ step-up. PASS it ⇒ a JP session is issued,
+    // which advances the confirmed-location baseline to Japan.
+    const jp = await loginReq(app, acct, { sample: sampleVector(4) }).set('X-Demo-Geo', 'JP');
+    expect(jp.body.status).toBe('step_up_required');
+    await request(app)
+      .post('/auth/step-up/verify')
+      .send({ challengeToken: String(jp.body.challengeToken), code: totpCode(secret) })
+      .expect(200);
+
+    // A SECOND login from Japan is now normal travel — baseline advanced to JP.
+    await loginReq(app, acct, { sample: sampleVector(5) }).set('X-Demo-Geo', 'JP').expect(200);
+    const row = await latest(pool, userId);
+    expect(subScore(row, 'geovelocity')).toBe(0);
+    expect(geoReason(row).prevGeo).toBe('JP');
   });
 
   it('production IGNORES X-Demo-Geo (the override never affects a shipped system)', async () => {

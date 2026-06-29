@@ -36,6 +36,19 @@ export function createDevicesRepository(db: Db) {
     },
 
     /**
+     * Promote a device to TRUSTED (known-untrusted → known-trusted) once it has earned
+     * it through sustained use (ADR-0017). Idempotent + monotonic: only flips a still-
+     * untrusted row, so repeated logins are no-ops. Returns whether a row transitioned.
+     */
+    async markTrusted(id: string): Promise<boolean> {
+      const result = await db.query(
+        `UPDATE devices SET trusted = TRUE WHERE id = $1 AND trusted = FALSE`,
+        [id],
+      );
+      return (result.rowCount ?? 0) > 0;
+    },
+
+    /**
      * Fetch one of the user's devices by id (scoped to user_id — defense against
      * IDOR). Used by the new-device signal to read trusted + first_seen.
      */

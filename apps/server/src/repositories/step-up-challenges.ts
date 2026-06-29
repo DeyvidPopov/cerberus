@@ -17,6 +17,9 @@ export interface CreateChallengeInput {
   isNewDevice: boolean;
   method: ChallengeMethod;
   expiresAt: Date;
+  /** Coarse login COUNTRY (ISO code) of the pending login, so a session issued on a
+   *  PASSED step-up records the same confirmed location for geovelocity (ADR-0011). */
+  geoCountry: string | null;
 }
 
 export interface ChallengeRecord {
@@ -26,6 +29,8 @@ export interface ChallengeRecord {
   isNewDevice: boolean;
   status: ChallengeStatus;
   expiresAt: Date;
+  /** The pending login's coarse country, carried onto the issued session on success. */
+  geoCountry: string | null;
 }
 
 export function createStepUpChallengesRepository(db: Db) {
@@ -33,10 +38,18 @@ export function createStepUpChallengesRepository(db: Db) {
     async create(input: CreateChallengeInput): Promise<{ id: string }> {
       const result = await db.query<{ id: string }>(
         `INSERT INTO step_up_challenges
-           (user_id, token_hash, device_id, is_new_device, method, status, expires_at)
-         VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+           (user_id, token_hash, device_id, is_new_device, method, status, expires_at, geo_country)
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
          RETURNING id`,
-        [input.userId, input.tokenHash, input.deviceId, input.isNewDevice, input.method, input.expiresAt],
+        [
+          input.userId,
+          input.tokenHash,
+          input.deviceId,
+          input.isNewDevice,
+          input.method,
+          input.expiresAt,
+          input.geoCountry,
+        ],
       );
       const row = result.rows[0];
       if (!row) {
@@ -54,8 +67,9 @@ export function createStepUpChallengesRepository(db: Db) {
         is_new_device: boolean;
         status: ChallengeStatus;
         expires_at: Date;
+        geo_country: string | null;
       }>(
-        `SELECT id, user_id, device_id, is_new_device, status, expires_at
+        `SELECT id, user_id, device_id, is_new_device, status, expires_at, geo_country
          FROM step_up_challenges
          WHERE token_hash = $1 AND status = 'pending' AND expires_at > now()`,
         [tokenHash],
@@ -69,6 +83,7 @@ export function createStepUpChallengesRepository(db: Db) {
             isNewDevice: row.is_new_device,
             status: row.status,
             expiresAt: row.expires_at,
+            geoCountry: row.geo_country,
           }
         : null;
     },

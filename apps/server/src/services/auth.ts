@@ -133,6 +133,8 @@ export function createAuthService(deps: AuthServiceDeps) {
     deviceId: string | null,
     isNewDevice: boolean,
     stepUpConfirmed: boolean,
+    /** Coarse login country recorded on the session — the geovelocity baseline (ADR-0011). */
+    geoCountry: string | null,
   ): Promise<({ kind: 'granted' } & GrantedSession)> {
     const vaultKey = await createVaultKeysRepository(pool).findByUserId(userId);
     if (!vaultKey) {
@@ -140,14 +142,27 @@ export function createAuthService(deps: AuthServiceDeps) {
     }
     const sessionToken = generateSessionToken();
     const expiresAt = new Date(Date.now() + config.sessionTtlMs);
-    await createSessionsRepository(pool).create({
+    const sessions = createSessionsRepository(pool);
+    await sessions.create({
       userId,
       deviceId,
       tokenHash: hashSessionToken(sessionToken),
       expiresAt,
       isNewDevice,
       stepUpConfirmed,
+      geoCountry,
     });
+    // Device trust (ADR-0017): a returning device with CONFIRMED logins (issued sessions)
+    // on enough DISTINCT days graduates known-untrusted → known-trusted, so a genuinely
+    // established device stops contributing to risk. Only returning devices can qualify
+    // (a first sighting can't span days); a denied / un-passed attempt issues no session
+    // and so earns nothing. markTrusted is idempotent (no-op once already trusted).
+    if (deviceId !== null && !isNewDevice) {
+      const distinctDays = await sessions.countDistinctLoginDays(deviceId);
+      if (distinctDays >= config.contextual.newDevice.trustAfterDistinctDays) {
+        await createDevicesRepository(pool).markTrusted(deviceId);
+      }
+    }
     return {
       kind: 'granted',
       sessionToken,
@@ -292,12 +307,14 @@ export function createAuthService(deps: AuthServiceDeps) {
           isNewDevice: device.isNew,
           method: 'totp',
           expiresAt,
+          geoCountry: decision.geoCountry, // carried onto the session if the step-up passes
         });
         return { kind: 'step_up', challengeToken, expiresAt: expiresAt.toISOString() };
       }
       // 'granted' or 'step_up_bootstrap_grant' (newcomer without a usable second factor).
-      // Neither passed a TOTP step-up, so the session is NOT step-up-confirmed.
-      return issueSession(user.id, device.id, device.isNew, false);
+      // Neither passed a TOTP step-up, so the session is NOT step-up-confirmed. The login's
+      // resolved country becomes this user's confirmed-location baseline (geovelocity).
+      return issueSession(user.id, device.id, device.isNew, false, decision.geoCountry);
     },
 
     /**
@@ -329,7 +346,8 @@ export function createAuthService(deps: AuthServiceDeps) {
         return { kind: 'invalid_credentials' };
       }
       // This session PASSED a TOTP step-up → mark it step-up-confirmed (gates /risk/events).
-      return issueSession(challenge.userId, challenge.deviceId, challenge.isNewDevice, true);
+      // The confirmed presence advances the geovelocity baseline to the challenge's location.
+      return issueSession(challenge.userId, challenge.deviceId, challenge.isNewDevice, true, challenge.geoCountry);
     },
 
     /**

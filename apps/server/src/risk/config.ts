@@ -192,6 +192,10 @@ export interface NewDeviceConfig {
   readonly knownTrustedScore: number;
   readonly knownUntrustedScore: number;
   readonly unseenScore: number;
+  /** Distinct calendar days (UTC) with a CONFIRMED login (an issued session) after which
+   *  a device graduates known-untrusted → known-trusted. Sustained real use over time —
+   *  NOT mere elapsed days (a once-seen idle device never earns trust). ADR-0017. */
+  readonly trustAfterDistinctDays: number;
 }
 
 /** geovelocity: speed band mapping implied travel speed to a [0,1] score. */
@@ -362,6 +366,7 @@ export const DEFAULT_CONTEXTUAL_CONFIG: ContextualConfig = {
     knownTrustedScore: 0,
     knownUntrustedScore: 0.3,
     unseenScore: 1,
+    trustAfterDistinctDays: 5,
   },
   geovelocity: {
     normalKmh: 250, // car / fast train

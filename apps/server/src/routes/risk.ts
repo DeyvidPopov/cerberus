@@ -1,5 +1,7 @@
 import {
+  KeystrokeRhythmResponseSchema,
   RiskEventsResponseSchema,
+  type KeystrokeRhythmResponse,
   type RiskEventsResponse,
   type SessionInfo,
 } from '@cerberus/shared-types';
@@ -21,6 +23,9 @@ export interface RiskRouterDeps {
   requireStepUp: RequestHandler;
   /** Per-user rate limit (PROJECT.md §4.3). */
   rateLimit: RequestHandler;
+  /** Mount the biometric keystroke-rhythm endpoint (ADR-0018). NON-PRODUCTION only — a
+   *  shipped build leaves it unmounted (404) so a baseline is never exposed. */
+  exposeKeystrokeRhythm: boolean;
 }
 
 function sessionUserId(res: Response): string {
@@ -70,6 +75,26 @@ export function createRiskRouter(deps: RiskRouterDeps): Router {
       res.json(response);
     }),
   );
+
+  // The caller's OWN enrolled keystroke baseline rhythm, for the inspector's live
+  // "baseline vs current" panel. Biometric-adjacent (durations) — ADR-0018 permits this
+  // ONLY behind the SAME gate as /risk/events (authenticate → requireStepUp → rate-limit)
+  // and scoped to the authenticated session's own user id (no IDOR, never from the request).
+  // NON-PRODUCTION only: in a shipped build the route is not mounted at all (404), so a
+  // baseline is never exposed — the deliberate ADR-0002 relaxation stays demo-scoped.
+  if (deps.exposeKeystrokeRhythm) {
+    router.get(
+      '/risk/keystroke-rhythm',
+      deps.authenticate,
+      deps.requireStepUp,
+      deps.rateLimit,
+      asyncHandler(async (_req, res) => {
+        const result = await deps.riskInspector.getKeystrokeRhythm(sessionUserId(res));
+        const response: KeystrokeRhythmResponse = KeystrokeRhythmResponseSchema.parse(result);
+        res.json(response);
+      }),
+    );
+  }
 
   return router;
 }

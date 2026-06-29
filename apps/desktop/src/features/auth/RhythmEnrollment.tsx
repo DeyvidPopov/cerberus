@@ -9,12 +9,11 @@
 // produce the rhythm; its characters never enter the behavioral path.
 import type { EnrollmentStatus } from '@cerberus/shared-types';
 import { FEATURE_SCHEMA_VERSION } from '@cerberus/shared-types';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Banner } from '../../components/ui/banner';
 import { Button } from '../../components/ui/button';
 import { CheckIcon, EyeIcon, EyeOffIcon } from '../../components/icons';
-import { WaveBars } from '../../components/ui/wave';
 import { ApiError, resetEnrollment, submitEnrollmentSample } from '../../lib/api';
 import { useKeystrokeCapture } from '../../lib/keystroke-capture';
 import { errorMessage } from '../../lib/tauri';
@@ -40,11 +39,30 @@ export function RhythmEnrollment({ token, initialStatus, step, onDone, onSignOut
   const [justCaptured, setJustCaptured] = useState(false);
   const capture = useKeystrokeCapture();
   const inputEl = useRef<HTMLInputElement | null>(null);
+  // The login flow buffers ONE sample passively, so this screen can open at "1 of N".
+  // That first sample is unreliable (the user wasn't typing deliberately yet), so we
+  // present a clean 0 and arm a one-time purge of the buffer — fired on the user's
+  // first DELIBERATE capture (below), never on mount. If the user SKIPS instead, the
+  // buffer is left intact so passive cross-login learning still works (ADR-0009).
+  const pendingPurge = useRef(false);
+  const didInit = useRef(false);
+
+  useEffect(() => {
+    if (didInit.current) {
+      return;
+    }
+    didInit.current = true;
+    if (initialStatus?.status === 'enrolling' && initialStatus.samplesCollected > 0) {
+      pendingPurge.current = true;
+      setStatus({ ...initialStatus, samplesCollected: 0 });
+    }
+  }, [initialStatus]);
 
   const startOver = (): void => {
     setError(null);
     setValue('');
     setResetting(true);
+    pendingPurge.current = false; // an explicit reset already clears the buffer
     void resetEnrollment(token)
       .then((fresh) => {
         setStatus(fresh);
@@ -77,7 +95,15 @@ export function RhythmEnrollment({ token, initialStatus, step, onDone, onSignOut
     }
     setError(null);
     setBusy(true);
-    void submitEnrollmentSample(token, { featureSchemaVersion: FEATURE_SCHEMA_VERSION, features: sample })
+    // On the FIRST deliberate capture, discard the passively-buffered login sample so
+    // the baseline is fitted only from these clean samples; subsequent captures append.
+    const purge = pendingPurge.current
+      ? resetEnrollment(token).then(() => {
+          pendingPurge.current = false;
+        })
+      : Promise.resolve();
+    void purge
+      .then(() => submitEnrollmentSample(token, { featureSchemaVersion: FEATURE_SCHEMA_VERSION, features: sample }))
       .then((next) => {
         setStatus(next);
         setJustCaptured(true);
@@ -108,10 +134,7 @@ export function RhythmEnrollment({ token, initialStatus, step, onDone, onSignOut
         subtitle="Cerberus learns the rhythm of HOW you type your master password — the tiny timing between keys, as unique as a signature."
       />
 
-      <div className="mt-4 flex items-start gap-3 rounded-xl border border-info/20 bg-info/[0.06] p-3.5">
-        <div className="hidden h-9 w-[88px] flex-none sm:block">
-          <WaveBars count={11} />
-        </div>
+      <div className="mt-4 rounded-xl border border-info/20 bg-info/[0.06] p-3.5">
         <p className="text-[12.5px] leading-[1.5] text-muted">
           With your rhythm, the vault can tell it&rsquo;s really you — even if someone else learns your password. Only
           the <span className="font-medium text-fg">timing</span> is captured; never the characters.

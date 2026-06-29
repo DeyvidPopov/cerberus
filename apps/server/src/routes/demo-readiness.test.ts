@@ -361,4 +361,30 @@ describe('demo-readiness — security evidence (a)-(j)', () => {
     expect(elevated.body.status).toBe('confirmed');
     await request(app).get('/risk/events').set('Authorization', bearer(token)).expect(200);
   });
+
+  it('(k) inspector keystroke-rhythm: SAME gate, scoped to self, returns the caller’s OWN baseline (ADR-0018)', async () => {
+    // Gated identically to /risk/events: no bearer → 401, a non-step-up session → 403.
+    const plainAcct = await registerAccount(app);
+    const plainToken = await loginGranted(app, plainAcct, {});
+    await request(app).get('/risk/keystroke-rhythm').expect(401);
+    await request(app).get('/risk/keystroke-rhythm').set('Authorization', bearer(plainToken)).expect(403);
+
+    // A step-up-confirmed session WITH an active keystroke baseline gets its own rhythm:
+    // per-position hold (n) + down-to-down flight (n−1), durations only — never characters.
+    const { token } = await stepUpConfirmedSession();
+    const res = await request(app).get('/risk/keystroke-rhythm').set('Authorization', bearer(token)).expect(200);
+    const n = 11; // the test baseline uses DIMENSION = featureDimension(11) = 31 dims
+    expect(res.body.rhythm.hold).toHaveLength(n);
+    expect(res.body.rhythm.flight).toHaveLength(n - 1);
+    expect(
+      (res.body.rhythm.hold as unknown[]).every((x) => typeof x === 'number' && Number.isFinite(x)),
+    ).toBe(true);
+
+    // HARD-GATED to non-production: a production build does not mount the route at all
+    // (404, never 401), so a shipped server never exposes a biometric baseline (ADR-0018).
+    const prodApp = createApp(pool, { ...config, nodeEnv: 'production' });
+    await request(prodApp).get('/risk/keystroke-rhythm').set('Authorization', bearer(token)).expect(404);
+    // …while the non-biometric /risk/events stays mounted in every environment (401, not 404).
+    await request(prodApp).get('/risk/events').expect(401);
+  });
 });

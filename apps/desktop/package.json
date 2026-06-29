@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev --features desktop -- --bin cerberus-desktop"
+    "tauri:dev": "tauri dev --features desktop -- --bin cerberus-desktop",
+    "tauri:build": "tauri build --features desktop -- --bin cerberus-desktop"
   },
   "dependencies": {
     "@cerberus/shared-types": "*",

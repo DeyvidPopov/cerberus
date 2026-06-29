@@ -10,6 +10,9 @@ export interface CreateSessionInput {
   isNewDevice: boolean;
   /** Was this session issued via a PASSED step-up (TOTP) in this login? Default false. */
   stepUpConfirmed?: boolean;
+  /** Coarse login COUNTRY (ISO code) of this confirmed login, or null if unresolved.
+   *  The geovelocity "previous location" baseline (ADR-0011). Never coordinates. */
+  geoCountry?: string | null;
 }
 
 export interface SessionRecord {
@@ -39,8 +42,8 @@ export function createSessionsRepository(db: Db) {
   return {
     async create(input: CreateSessionInput): Promise<{ id: string }> {
       const result = await db.query<{ id: string }>(
-        `INSERT INTO sessions (user_id, device_id, token_hash, expires_at, is_new_device, step_up_confirmed)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO sessions (user_id, device_id, token_hash, expires_at, is_new_device, step_up_confirmed, geo_country)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
         [
           input.userId,
@@ -49,6 +52,7 @@ export function createSessionsRepository(db: Db) {
           input.expiresAt,
           input.isNewDevice,
           input.stepUpConfirmed ?? false,
+          input.geoCountry ?? null,
         ],
       );
       const row = result.rows[0];
@@ -108,6 +112,43 @@ export function createSessionsRepository(db: Db) {
         isNewDevice: row.is_new_device,
         stepUpConfirmed: row.step_up_confirmed,
       };
+    },
+
+    /**
+     * The user's most recent CONFIRMED login location — the country of the latest
+     * ISSUED session (a session exists ⇒ presence was confirmed: a grant, a newcomer
+     * bootstrap grant, or a PASSED step-up). This is the geovelocity "previous location"
+     * baseline (ADR-0011): a mere denied / un-passed step-up attempt issues no session
+     * and therefore cannot move it. Scoped to user_id; skips sessions with no resolved
+     * country; null when the user has no prior located session (cold-start neutral).
+     */
+    async findLatestLocation(userId: string): Promise<{ country: string; atMs: number } | null> {
+      const result = await db.query<{ geo_country: string; created_at: Date }>(
+        `SELECT geo_country, created_at
+         FROM sessions
+         WHERE user_id = $1 AND geo_country IS NOT NULL
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [userId],
+      );
+      const row = result.rows[0];
+      return row ? { country: row.geo_country, atMs: row.created_at.getTime() } : null;
+    },
+
+    /**
+     * How many DISTINCT UTC calendar days this device has a CONFIRMED login (an issued
+     * session) on. Feeds device-trust promotion (ADR-0017): trust is earned by sustained
+     * real use spread over time, not mere elapsed days. A denied / un-passed step-up
+     * issues no session, so it never counts toward trust.
+     */
+    async countDistinctLoginDays(deviceId: string): Promise<number> {
+      const result = await db.query<{ count: string }>(
+        `SELECT count(DISTINCT (created_at AT TIME ZONE 'UTC')::date)::int AS count
+         FROM sessions
+         WHERE device_id = $1`,
+        [deviceId],
+      );
+      return Number(result.rows[0]?.count ?? 0);
     },
 
     /**

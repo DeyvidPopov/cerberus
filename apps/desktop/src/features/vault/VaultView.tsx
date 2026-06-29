@@ -35,7 +35,7 @@ import { Input } from '../../components/ui/input';
 import { WaveBars } from '../../components/ui/wave';
 import { cn } from '../../lib/cn';
 import type { AuthenticatedSession, LockReason } from '../auth/AuthScreen';
-import { getTotpStatus } from '../../lib/api';
+import { getEnrollmentStatus, getTotpStatus } from '../../lib/api';
 import { isValidOtpSecret } from '../../lib/otp';
 import { attachMouseCapture } from '../../lib/mouse-capture';
 import {
@@ -684,6 +684,10 @@ export function VaultView({ onLock, session }: VaultViewProps) {
   const [showDashboard, setShowDashboard] = useState(false);
   // Set once the onboarding wizard (2FA + typing rhythm) has been completed this session.
   const [onboardingDone, setOnboardingDone] = useState(false);
+  // Behavioral enrollment progress. Seeded from the login-time snapshot, then refreshed
+  // after the onboarding wizard finishes — otherwise the vault banner would keep showing
+  // the stale login value (e.g. "1 of 5") after the rhythm baseline is already built.
+  const [enrollment, setEnrollment] = useState<EnrollmentStatus | null>(session.enrollment);
 
   // THE single source of truth for the vault's lock state (encryption key in memory).
   const vaultUnlocked = session.vaultUnlocked;
@@ -888,14 +892,21 @@ export function VaultView({ onLock, session }: VaultViewProps) {
   // and calls onComplete → the vault. Gated until the 2FA status has resolved so we never
   // flash the wrong step. The continuous-auth lock effect above keeps running throughout.
   const needsTotp = totpConfirmed === false;
-  const needsRhythm = session.enrollment !== null && session.enrollment.status !== 'active';
+  const needsRhythm = enrollment !== null && enrollment.status !== 'active';
   if (token !== null && totpConfirmed !== null && !onboardingDone && (needsTotp || needsRhythm)) {
     return (
       <Onboarding
         token={token}
         needsTotp={needsTotp}
-        initialEnrollment={session.enrollment}
+        initialEnrollment={enrollment}
         onComplete={() => {
+          // Refresh the baseline status the wizard just advanced (best-effort): a completed
+          // rhythm enrolment is now 'active', which hides the vault banner entirely.
+          void getEnrollmentStatus(token)
+            .then(setEnrollment)
+            .catch(() => {
+              /* keep the prior snapshot; never block opening the vault */
+            });
           setOnboardingDone(true);
         }}
         onSignOut={() => {
@@ -911,6 +922,7 @@ export function VaultView({ onLock, session }: VaultViewProps) {
     return (
       <RiskDashboard
         token={token}
+        keystrokeVector={session.keystrokeVector}
         onClose={() => {
           setShowDashboard(false);
         }}
@@ -1004,7 +1016,7 @@ export function VaultView({ onLock, session }: VaultViewProps) {
           </span>
         </header>
 
-        {session.enrollment !== null && <EnrollmentBanner enrollment={session.enrollment} />}
+        {enrollment !== null && <EnrollmentBanner enrollment={enrollment} />}
         {error !== null && (
           <div className="px-4 pt-3">
             <Banner tone="error" title={error} />
